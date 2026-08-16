@@ -1,0 +1,3 @@
+import { ChevronDown } from "lucide-react";
+import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
+export function SchoolSwitcher({ compact = false }: { compact?: boolean }) { const {settings} = useSchoolSettings(); return compact ? null : <button type="button" className="flex w-full items-center justify-between rounded-[10px] border bg-surface-muted p-2.5 text-left" aria-label="Switch school"><span className="min-w-0"><span className="block truncate text-xs font-semibold">{settings.name}</span><span className="mt-0.5 block text-[11px] text-muted">{settings.currentTerm} · {settings.currentAcademicSession}</span></span><ChevronDown className="shrink-0 text-muted" size={15} /></button>; }

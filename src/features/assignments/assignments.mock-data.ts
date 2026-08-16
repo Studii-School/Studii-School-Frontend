@@ -1,0 +1,3 @@
+import type { AssignmentsState } from "./assignments.types";
+const createdAt="2026-07-20T09:00:00.000Z";
+export const defaultAssignmentsState:AssignmentsState={assignments:[{id:"assignment-fractions",schoolId:"school-001",teacherUserId:"teacher-user-001",classId:"class-jss1-gold",subjectId:"subject-mathematics",title:"Fractions practice",instructions:"Complete questions 1-10 and show every step.",dueAt:"2026-07-25T16:00",status:"PUBLISHED",createdAt,updatedAt:createdAt,publishedAt:createdAt}],submissions:["student-yusuf","student-david","student-favour","student-ifeoma"].map((studentId)=>({id:`submission-fractions-${studentId}`,assignmentId:"assignment-fractions",studentId,status:"NOT_SUBMITTED",text:"",updatedAt:createdAt}))};

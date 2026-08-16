@@ -1,0 +1,3 @@
+import type { AssignmentAsset } from "./assignments.types";
+const accepted=new Set(["image/png","image/jpeg","image/webp","application/pdf"]);const maximum=5*1024*1024;
+export async function readAssignmentAsset(file:File):Promise<AssignmentAsset>{if(!accepted.has(file.type))throw new Error("Choose a PDF, PNG, JPG or WebP file.");if(file.size>maximum)throw new Error("Attachment must be 5 MB or smaller.");const dataUrl=await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(new Error("Attachment could not be read."));reader.readAsDataURL(file)});return{id:`asset-${Date.now()}`,name:file.name,type:file.type,size:file.size,dataUrl}}

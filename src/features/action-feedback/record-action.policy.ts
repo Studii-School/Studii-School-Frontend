@@ -1,0 +1,4 @@
+export type RecordAction="DELETE"|"ARCHIVE"|"VOID"|"CANCEL"|"REOPEN";
+export function classRemovalPolicy(studentCount:number){return studentCount>0?{allowed:false,action:"ARCHIVE" as RecordAction,reason:"Classes with enrolled students must be archived to preserve history."}:{allowed:true,action:"ARCHIVE" as RecordAction}}
+export function assignmentRemovalPolicy(status:string,submissionCount:number){if(status==="CLOSED")return{allowed:false,action:"ARCHIVE" as RecordAction,reason:"Closed assignments should be archived."};if(status==="PUBLISHED"&&submissionCount>0)return{allowed:false,action:"ARCHIVE" as RecordAction,reason:"Published assignments with submissions cannot be deleted."};return{allowed:true,action:"DELETE" as RecordAction}}
+export function financialDeletionPolicy(){return{allowed:false,reason:"Financial records cannot be deleted. Use the appropriate void, refund, cancel or waive workflow."}}

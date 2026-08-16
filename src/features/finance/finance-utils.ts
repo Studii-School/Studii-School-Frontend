@@ -1,0 +1,5 @@
+import type { InvoiceStatus,ReconciliationStatus } from "./finance.types";
+export const invoiceTone=(status:InvoiceStatus)=>status==="Paid"?"success":status==="Overdue"?"danger":status==="Partially paid"?"warning":"neutral";
+export const reconciliationTone=(status:ReconciliationStatus)=>status==="Auto-matched"||status==="Manually matched"?"success":status==="Duplicate"||status==="Reversed"?"danger":"warning";
+export const mockPaymentReference=()=>`DEMO-${new Date().getFullYear()}-${Math.random().toString(36).slice(2,8).toUpperCase()}`;
+export function downloadCsv(filename:string,rows:Record<string,string|number|undefined>[]){if(!rows.length)return;const headers=Object.keys(rows[0]);const escape=(value:string|number|undefined)=>`"${String(value??"").replace(/"/g,'""')}"`;const csv=[headers.join(","),...rows.map((row)=>headers.map((key)=>escape(row[key])).join(","))].join("\n");const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});const url=URL.createObjectURL(blob);const anchor=document.createElement("a");anchor.href=url;anchor.download=filename;anchor.click();URL.revokeObjectURL(url)}

@@ -1,0 +1,4 @@
+"use client";
+import { createContext,useContext } from "react";import type { AssignmentAsset,AssignmentInput,AssignmentsState } from "./assignments.types";
+export interface AssignmentsContextValue{state:AssignmentsState;isLoading:boolean;save(input:AssignmentInput,id?:string):Promise<string>;publish(id:string):Promise<void>;close(id:string):Promise<void>;duplicate(id:string):Promise<void>;remove(id:string):Promise<void>;submit(assignmentId:string,text:string,attachment?:AssignmentAsset,studentId?:string,studentClassId?:string):Promise<void>;grade(assignmentId:string,submissionId:string,input:{score:number;maxScore?:number;feedback?:string}):Promise<void>;refresh():Promise<void>}
+export const AssignmentsContext=createContext<AssignmentsContextValue|null>(null);export function useAssignments(){const value=useContext(AssignmentsContext);if(!value)throw new Error("useAssignments must be used within AssignmentsProvider");return value}

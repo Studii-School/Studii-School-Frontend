@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+.dashboard-grid .react-grid-item {
+  min-width: 0;
+  transition:
+    transform 180ms ease,
+    width 180ms ease,
+    height 180ms ease;
+}
+
+.dashboard-grid .react-grid-item.react-grid-placeholder {
+  border: 1px dashed var(--school-primary);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--school-primary) 12%, transparent);
+  opacity: 1;
+}
+
+.dashboard-grid .react-grid-item > .react-resizable-handle {
+  z-index: 5;
+  height: 22px;
+  width: 22px;
+}
+
+.dashboard-grid .react-grid-item > .react-resizable-handle::after {
+  border-color: var(--school-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-grid .react-grid-item {
+    transition: none;
+  }
+}
+
+:root {
+  --background: #F8FAFC;
+  --foreground: #172033;
+  --primary: #075985;
+  --primary-hover: #0369A1;
+  --primary-light: #E0F2FE;
+  --secondary: #0F766E;
+  --secondary-light: #CCFBF1;
+  --surface: #FFFFFF;
+  --surface-muted: #F1F5F9;
+  --border: #E2E8F0;
+  --muted: #64748B;
+  --success: #15803D;
+  --warning: #B45309;
+  --danger: #B91C1C;
+  --school-primary: #075985;
+  --school-primary-foreground: #FFFFFF;
+  --school-secondary: #0F766E;
+  --school-secondary-foreground: #FFFFFF;
+  --school-accent: #F59E0B;
+  --school-accent-foreground: #172033;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-light: var(--primary-light);
+  --color-secondary: var(--secondary);
+  --color-secondary-light: var(--secondary-light);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-school-primary: var(--school-primary);
+  --color-school-secondary: var(--school-secondary);
+  --color-school-accent: var(--school-accent);
+  --font-sans: var(--font-geist-sans);
+}
+
+* { border-color: var(--border); }
+html { background: var(--background); }
+body { min-height: 100vh; background: var(--background); color: var(--foreground); }
+button, a, input, select { outline: none; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+}
+
+@media print {
+  body * { visibility: hidden; }
+  .receipt-print, .receipt-print * { visibility: visible; }
+  .receipt-print { position: absolute; inset: 0; width: 100%; max-width: none !important; border: 0 !important; background: white !important; color: black !important; }
+  .receipt-actions, nav, header, aside { display: none !important; }
+}

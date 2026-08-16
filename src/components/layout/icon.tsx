@@ -1,0 +1,4 @@
+import { LayoutDashboard, Users, UserRoundPlus, BriefcaseBusiness, BookOpen, CalendarCheck, WalletCards, Megaphone, ChartNoAxesCombined, Settings, School, ClipboardCheck, CalendarDays, ClipboardList, UserRound, UserRoundCog, CalendarRange, Building2, Trash2, type LucideProps } from "lucide-react";
+import type { IconName } from "@/types";
+const icons = { dashboard: LayoutDashboard, students: Users, admissions: UserRoundPlus, staff: BriefcaseBusiness, academics: BookOpen, attendance: CalendarCheck, finance: WalletCards, communications: Megaphone, reports: ChartNoAxesCombined, settings: Settings, classes: School, results: ClipboardCheck, timetable: CalendarDays, assignments: ClipboardList, children: UserRound, profile: UserRoundCog, events: CalendarRange, schoolProfile: Building2, trash: Trash2 };
+export function NavIcon({ name, ...props }: LucideProps & { name: IconName }) { const Icon = icons[name]; return <Icon {...props} />; }

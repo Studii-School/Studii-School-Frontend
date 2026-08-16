@@ -1,0 +1,2 @@
+import { CheckCircle2 } from "lucide-react";
+export function ActivityList({ items }: { items: string[] }) { return <ul className="divide-y px-4 sm:px-5">{items.map((item, index) => <li className="flex gap-3 py-3.5" key={item}><CheckCircle2 className="mt-0.5 shrink-0 text-secondary" size={16} /><div><p className="text-sm">{item}</p><p className="mt-0.5 text-xs text-muted">{index + 1} hour{index ? "s" : ""} ago</p></div></li>)}</ul>; }
