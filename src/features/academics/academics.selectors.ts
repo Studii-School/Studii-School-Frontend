@@ -48,16 +48,16 @@ export const getClassesForTeacher = (
   state: AcademicsState,
   userId: string,
 ) => {
+  const teacher = state.staff.find((item) => item.userId === userId || item.id === userId);
+  const teacherUserId = teacher?.userId ?? userId;
   const ids = new Set(
-    getTeacherClassAssignments(state, userId).map((item) => item.classId),
+    getTeacherClassAssignments(state, teacherUserId).map((item) => item.classId),
   );
   return sortClasses(
     state.classes.filter(
       (item) =>
         item.status === "ACTIVE" &&
-        (ids.has(item.id) ||
-          item.classTeacherUserId === userId ||
-          item.assignedTeacherUserIds.includes(userId)),
+        ids.has(item.id),
     ),
   );
 };

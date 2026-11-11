@@ -3,27 +3,16 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { AudiencePicker } from "@/components/shared/audience-picker";
 import { getClassOptions } from "@/features/academics/academics.class-utils";
 import { useAcademics } from "@/features/academics/academics-context";
 import type {
   Announcement,
   AnnouncementAudience,
   AnnouncementInput,
-  AnnouncementStatus,
 } from "../announcements.types";
-
-const audienceOptions: Array<{
-  value: AnnouncementAudience;
-  label: string;
-}> = [
-  { value: "EVERYONE", label: "Everyone" },
-  { value: "STUDENTS", label: "Students" },
-  { value: "TEACHERS", label: "Teachers" },
-  { value: "PARENTS", label: "Parents" },
-  { value: "STAFF", label: "Staff" },
-  { value: "SELECTED_CLASSES", label: "Selected Classes" },
-];
+import { announcementAudienceOptions } from "../announcement-audiences";
 
 export function AnnouncementForm({
   initial,
@@ -43,9 +32,8 @@ export function AnnouncementForm({
     initial?.audiences ?? [],
   );
   const [classIds, setClassIds] = useState(initial?.selectedClassIds ?? []);
-  const [status, setStatus] = useState<AnnouncementStatus>(
-    initial?.status ?? "DRAFT",
-  );
+  const [published, setPublished] = useState(initial?.status === "PUBLISHED");
+  const [publishTouched, setPublishTouched] = useState(false);
   const [publishAt, setPublishAt] = useState(
     initial?.publishAt ?? new Date().toISOString().slice(0, 10),
   );
@@ -58,19 +46,6 @@ export function AnnouncementForm({
   const [ctaUrl, setCtaUrl] = useState(initial?.ctaUrl ?? "");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-
-  const toggleAudience = (value: AnnouncementAudience) =>
-    setAudiences((current) =>
-      current.includes(value)
-        ? current.filter((item) => item !== value)
-        : [...current, value],
-    );
-  const toggleClass = (id: string) =>
-    setClassIds((current) =>
-      current.includes(id)
-        ? current.filter((item) => item !== id)
-        : [...current, id],
-    );
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -101,6 +76,7 @@ export function AnnouncementForm({
     }
     setSaving(true);
     try {
+      const status = published ? "PUBLISHED" : !publishTouched && initial?.status === "ARCHIVED" ? "ARCHIVED" : "DRAFT";
       await onSave({
         title: title.trim(),
         summary: summary.trim(),
@@ -141,30 +117,15 @@ export function AnnouncementForm({
       </section>
       <section>
         <h3 className="text-sm font-semibold">Audience</h3>
-        <div className="mt-3 flex flex-wrap gap-3">
-          {audienceOptions.map((item) => (
-            <label key={item.value} className="flex min-h-10 items-center gap-2 rounded-[10px] border px-3 text-sm">
-              <input type="checkbox" checked={audiences.includes(item.value)} onChange={() => toggleAudience(item.value)} />
-              {item.label}
-            </label>
-          ))}
+        <div className="mt-3">
+          <AudiencePicker options={announcementAudienceOptions} everyone="EVERYONE" classesValue="SELECTED_CLASSES" values={audiences} onChange={setAudiences} classOptions={activeClasses} selectedClasses={classIds} onClassesChange={setClassIds} />
         </div>
-        {audiences.includes("SELECTED_CLASSES") && (
-          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {activeClasses.map((item) => (
-              <label key={item.value} className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={classIds.includes(item.value)} onChange={() => toggleClass(item.value)} />
-                {item.label}
-              </label>
-            ))}
-          </div>
-        )}
         <p className="mt-3 rounded-lg bg-surface-muted p-3 text-sm">
           <b>Visible to:</b>{" "}
           {audiences
             .map(
               (item) =>
-                audienceOptions.find((option) => option.value === item)?.label,
+                announcementAudienceOptions.find((option) => option.value === item)?.label,
             )
             .join(", ") || "No audience selected"}
           {classIds.length > 0 && audiences.includes("SELECTED_CLASSES") && (
@@ -184,13 +145,13 @@ export function AnnouncementForm({
       </section>
       <section className="grid gap-4 sm:grid-cols-2">
         <h3 className="text-sm font-semibold sm:col-span-2">Publishing</h3>
-        <label className="text-sm font-medium">
-          Status
-          <Select className="mt-2" label="Announcement status" value={status} onChange={(value) => setStatus(value as AnnouncementStatus)} options={["DRAFT", "PUBLISHED", "ARCHIVED"].map((value) => ({ value, label: value }))} />
-        </label>
+        <div className="flex items-center justify-between gap-3 rounded-xl border bg-surface-muted/40 p-3 sm:col-span-2">
+          <div><p className="text-sm font-semibold">Publish announcement</p><p className="text-xs text-muted">{published ? "Visible to the selected audience" : "Saved as a draft"}</p></div>
+          <Switch checked={published} onCheckedChange={(value) => { setPublished(value); setPublishTouched(true); }} label="Publish announcement" />
+        </div>
         <label className="text-sm font-medium">Publish date<Input className="mt-2" type="date" value={publishAt} onChange={(event) => setPublishAt(event.target.value)} /></label>
         <label className="text-sm font-medium">Expiry date<Input className="mt-2" type="date" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} /></label>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={isPinned} onChange={(event) => setPinned(event.target.checked)} />Pin as important</label>
+        <div className="flex items-center justify-between gap-3 rounded-xl border bg-surface-muted/40 p-3 sm:col-span-2"><span className="text-sm font-medium">Pin as important</span><Switch checked={isPinned} onCheckedChange={setPinned} label="Pin as important" /></div>
       </section>
       <section className="grid gap-4 sm:grid-cols-2">
         <h3 className="text-sm font-semibold sm:col-span-2">Optional actions</h3>

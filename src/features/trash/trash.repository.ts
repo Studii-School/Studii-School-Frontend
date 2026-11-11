@@ -31,5 +31,13 @@ export async function getTrash(category?: string) {
 }
 
 export async function restoreTrashRecord(id: string) {
-  return apiRequest<void>(`/trash/${encodeURIComponent(id)}/restore`, { method: "POST" });
+  try {
+    return await apiRequest<void>(`/trash/${encodeURIComponent(id)}/restore`, { method: "POST" });
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : "";
+    if (message.includes("Cannot POST /trash/") && message.includes("/restore")) {
+      throw new Error("Trash restore is not available in the backend API yet.");
+    }
+    throw caught;
+  }
 }

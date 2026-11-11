@@ -7,6 +7,8 @@ import { AssignmentsContext } from "./assignments-context";
 import { assignmentsRepository } from "./assignments.repository";
 import { ASSIGNMENTS_STORAGE_KEY, emptyAssignmentsState } from "./assignments.storage";
 import type { AssignmentAsset, AssignmentInput, AssignmentsState } from "./assignments.types";
+import { useAcademicPeriodScope } from "@/features/academic-period/academic-period-context";
+import { filterAssignmentsByPeriod } from "./assignments-period-utils";
 
 const fallbackTeacherId = "teacher-user-001";
 const fallbackStudentId = "student-yusuf";
@@ -21,12 +23,14 @@ function studentId() {
 }
 
 export function AssignmentsProvider({ children }: { children: React.ReactNode }) {
+  const period = useAcademicPeriodScope();
   const [state, setState] = useState<AssignmentsState>(emptyAssignmentsState);
   const [isLoading, setLoading] = useState(true);
   const refresh = useCallback(async () => {
-    setState(await assignmentsRepository.getState());
+    if (!period.isReady) return;
+    setState(await assignmentsRepository.getState(period));
     setLoading(false);
-  }, []);
+  }, [period]);
 
   useEffect(() => {
     void refresh();
@@ -38,10 +42,10 @@ export function AssignmentsProvider({ children }: { children: React.ReactNode })
   }, [refresh]);
 
   const save = useCallback(async (input: AssignmentInput, id?: string) => {
-    const item = await assignmentsRepository.saveTeacherAssignment(teacherId(), input, id);
+    const item = await assignmentsRepository.saveTeacherAssignment(teacherId(), { ...input, academicSessionId: period.academicSessionId, sessionId: period.academicSessionId, termId: period.termId }, id);
     await refresh();
     return item.id;
-  }, [refresh]);
+  }, [period.academicSessionId, period.termId, refresh]);
   const publish = useCallback(async (id: string) => {
     await assignmentsRepository.publish(teacherId(), id);
     await refresh();
@@ -66,7 +70,12 @@ export function AssignmentsProvider({ children }: { children: React.ReactNode })
     await assignmentsRepository.gradeSubmission(teacherId(), assignmentId, submissionId, input);
     await refresh();
   }, [refresh]);
-  const value = useMemo(() => ({ state, isLoading, save, publish, close, duplicate, remove, submit, grade, refresh }), [state, isLoading, save, publish, close, duplicate, remove, submit, grade, refresh]);
+  const scopedState = useMemo<AssignmentsState>(() => {
+    const assignments = filterAssignmentsByPeriod(state.assignments, period);
+    const assignmentIds = new Set(assignments.map((item) => item.id));
+    return { assignments, submissions: state.submissions.filter((item) => assignmentIds.has(item.assignmentId)) };
+  }, [period, state]);
+  const value = useMemo(() => ({ state: scopedState, isLoading, save, publish, close, duplicate, remove, submit, grade, refresh }), [scopedState, isLoading, save, publish, close, duplicate, remove, submit, grade, refresh]);
 
   return <AssignmentsContext.Provider value={value}>{children}</AssignmentsContext.Provider>;
 }

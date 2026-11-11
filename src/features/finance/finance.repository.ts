@@ -1,8 +1,8 @@
 import { getAcademicsState } from "@/features/academics/academics.storage";
-import type { Guardian, SchoolClass, Student } from "@/features/academics/academics.types";
+import type { Guardian, SchoolClass, StaffMember, Student } from "@/features/academics/academics.types";
 import { classIdForName, classNameFor, demoGuardians, demoStudents } from "@/lib/demo-relationships";
 import { getFinanceState, resetFinanceState, saveFinanceState } from "./finance.storage";
-import type { CheckoutInput, CheckoutResponse, DemoPaymentOutcome, Expense, FeeStructure, FinanceState, FinanceSummary, Payment, Receipt, RecordExpenseInput, RecordPaymentInput, StudentInvoice } from "./finance.types";
+import type { CheckoutInput, CheckoutResponse, CreateStaffFinanceEntryInput, DemoPaymentOutcome, Expense, FeeStructure, FinanceState, FinanceSummary, Payment, Receipt, RecordExpenseInput, RecordPaymentInput, StaffFinanceEntry, StaffFinanceRow, StudentInvoice } from "./finance.types";
 
 export interface FinanceRepository {
   getState(): Promise<FinanceState>;
@@ -11,6 +11,7 @@ export interface FinanceRepository {
   createFeeStructure(input: Omit<FeeStructure, "id" | "studentsAssigned" | "expectedRevenue">): Promise<FeeStructure>;
   activateFeeStructure(id: string): Promise<{ fee: FeeStructure; invoicesCreated: number }>;
   updateFeeStructure(id: string, input: Partial<FeeStructure>): Promise<FeeStructure | undefined>;
+  deleteFeeStructure(id: string): Promise<void>;
   getInvoices(): Promise<StudentInvoice[]>;
   getInvoiceById(id: string): Promise<StudentInvoice | undefined>;
   recordPayment(input: RecordPaymentInput): Promise<{ payment: Payment; receipt: Receipt }>;
@@ -18,6 +19,11 @@ export interface FinanceRepository {
   getPayments(): Promise<Payment[]>;
   getExpenses(): Promise<Expense[]>;
   recordExpense(input: RecordExpenseInput): Promise<Expense>;
+  getAdminStaffFinance(): Promise<{ staff: StaffFinanceRow[]; teachers: Array<StaffFinanceRow & { teacherId: string; teacherName: string }> }>;
+  createPayrollRun(period: string): Promise<{ period: string; created: number; alreadyPrepared: boolean }>;
+  createStaffFinanceEntry(staffUserId: string, input: CreateStaffFinanceEntryInput): Promise<StaffFinanceEntry>;
+  updateStaffFinanceEntryStatus(entryId: string, status: StaffFinanceEntry["status"], input?: { method?: string; reference?: string; note?: string }): Promise<StaffFinanceEntry>;
+  payStaffFinanceEntry(entryId: string, input: { method: string; reference: string; paymentDate?: string; note?: string }): Promise<StaffFinanceEntry>;
   getReceipts(): Promise<Receipt[]>;
   matchTransaction(transactionId: string, invoiceId: string): Promise<{ payment: Payment; receipt: Receipt }>;
   getDebtors(): Promise<StudentInvoice[]>;
@@ -42,13 +48,14 @@ type EligibleStudent = {
 const uid = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 const statusFor = (balance: number, paid: number, dueDate: string): StudentInvoice["status"] => balance <= 0 ? "Paid" : new Date(`${dueDate}T23:59:59`) < new Date() ? "Overdue" : paid > 0 ? "Partially paid" : "Unpaid";
 const studentName = (student: Student) => [student.firstName, student.middleName, student.lastName].filter(Boolean).join(" ") || student.admissionNumber;
+const staffName = (staff: StaffMember) => staff.fullName || [staff.firstName, staff.lastName].filter(Boolean).join(" ") || staff.email;
 const classLabel = (classes: SchoolClass[], classId: string) => classes.find((item) => item.id === classId)?.displayName ?? classes.find((item) => item.id === classId)?.name ?? classNameFor(classId);
 const guardianFor = (student: Student, guardians: Guardian[]) => guardians.find((guardian) => student.guardianIds.includes(guardian.id) || student.parentIds?.includes(guardian.id) || Boolean(guardian.email && student.guardianEmail && guardian.email.toLowerCase() === student.guardianEmail.toLowerCase()));
 
 export class LocalFinanceRepository implements FinanceRepository {
   async getState() {
     const base = await getFinanceState();
-    const state = { ...base, expenses: base.expenses ?? [] };
+    const state = { ...base, expenses: base.expenses ?? [], staffFinanceEntries: base.staffFinanceEntries ?? [] };
     let changed = false;
     for (const fee of state.feeStructures.filter((item) => item.status === "Active")) {
       const eligible = await this.eligibleStudents(fee);
@@ -146,6 +153,8 @@ export class LocalFinanceRepository implements FinanceRepository {
         classId: student.classId,
         className: student.className,
         feeStructureId: fee.id,
+        academicSessionId: fee.academicSessionId,
+        termId: fee.termId,
         academicSession: fee.academicSession,
         term: fee.term,
         totalAmount: fee.amount,
@@ -163,7 +172,7 @@ export class LocalFinanceRepository implements FinanceRepository {
 
   async createFeeStructure(input: Omit<FeeStructure, "id" | "studentsAssigned" | "expectedRevenue">) {
     const state = await this.getState();
-    const duplicate = state.feeStructures.some((item) => item.academicSession === input.academicSession && item.term === input.term && item.category === input.category && item.classGroup === input.classGroup && item.status !== "Archived");
+    const duplicate = state.feeStructures.some((item) => item.academicSession === input.academicSession && item.term === input.term && item.category === input.category && item.classGroup === input.classGroup && !["Inactive", "Archived"].includes(item.status));
     if (duplicate) throw new Error("A similar fee already exists for this class, term and category.");
     const now = new Date().toISOString();
     const base = { ...input, id: uid("fee"), schoolId: "school-001", createdAt: now, updatedAt: now, studentsAssigned: 0, expectedRevenue: 0 };
@@ -199,6 +208,18 @@ export class LocalFinanceRepository implements FinanceRepository {
     state.feeStructures = state.feeStructures.map((item) => item.id === id ? (updated = { ...item, ...input, updatedAt: new Date().toISOString() }) : item);
     await saveFinanceState(state);
     return updated;
+  }
+
+  async deleteFeeStructure(id: string) {
+    const state = await this.getState();
+    const fee = state.feeStructures.find((item) => item.id === id);
+    if (!fee) throw new Error("Fee structure not found.");
+    if (state.invoices.some((item) => item.feeStructureId === id)) {
+      throw new Error("This fee already has invoices. Deactivate it instead so existing records stay correct.");
+    }
+    state.feeStructures = state.feeStructures.filter((item) => item.id !== id);
+    state.activity.unshift(`${fee.name} deleted.`);
+    await saveFinanceState(state);
   }
 
   async getInvoices() { return (await this.getState()).invoices; }
@@ -240,6 +261,130 @@ export class LocalFinanceRepository implements FinanceRepository {
     state.activity.unshift(`Expense recorded: ${expense.title}`);
     await saveFinanceState(state);
     return expense;
+  }
+  async getAdminStaffFinance() {
+    const [state, academics] = await Promise.all([this.getState(), getAcademicsState()]);
+    const rows: StaffFinanceRow[] = academics.staff.map((staff) => ({
+      staffUserId: staff.userId,
+      staffName: staffName(staff),
+      email: staff.email,
+      employeeNumber: staff.employeeNumber ?? staff.staffId,
+      jobTitle: staff.jobTitle,
+      isTeachingStaff: staff.isTeachingStaff,
+      salaryAmount: staff.salaryAmount ?? 0,
+      entries: state.staffFinanceEntries.filter((entry) => entry.staffUserId === staff.userId),
+    }));
+    return {
+      staff: rows,
+      teachers: rows.map((row) => ({ ...row, teacherId: row.staffUserId, teacherName: row.staffName })),
+    };
+  }
+  async createStaffFinanceEntry(staffUserId: string, input: CreateStaffFinanceEntryInput) {
+    const state = await this.getState();
+    const academics = await getAcademicsState();
+    const staff = academics.staff.find((item) => item.userId === staffUserId);
+    if (!staff) throw new Error("Staff member not found.");
+    if (!input.title.trim()) throw new Error("Title is required.");
+    if (input.amount < 0) throw new Error("Amount cannot be negative.");
+    if (input.type === "DEDUCTION" && input.payrollPeriod) {
+      const salaryEntry = state.staffFinanceEntries.find((entry) => entry.staffUserId === staffUserId && entry.type === "SALARY" && entry.payrollPeriod === input.payrollPeriod);
+      if (salaryEntry?.status === "PAID") throw new Error("This month's salary has already been paid. Add the deduction to a future payroll instead.");
+      const gross = salaryEntry?.amount ?? staff.salaryAmount ?? 0;
+      const deductions = state.staffFinanceEntries.filter((entry) => entry.staffUserId === staffUserId && entry.type === "DEDUCTION" && entry.payrollPeriod === input.payrollPeriod).reduce((sum, entry) => sum + entry.amount, 0);
+      if (input.amount + deductions > gross) throw new Error("Deductions cannot be greater than this month's salary.");
+    }
+    const now = new Date().toISOString();
+    const entry: StaffFinanceEntry = {
+      id: uid("staff-fin"),
+      staffUserId,
+      type: input.type,
+      title: input.title.trim(),
+      amount: input.amount,
+      status: input.status,
+      dueDate: input.dueDate ?? null,
+      paidAt: input.paidAt ?? (input.status === "PAID" ? now.slice(0, 10) : null),
+      paymentMethod: input.paymentMethod ?? null,
+      paymentReference: input.paymentReference ?? null,
+      paymentNote: input.paymentNote ?? null,
+      payrollPeriod: input.payrollPeriod ?? null,
+      note: input.note?.trim() || null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    state.staffFinanceEntries.unshift(entry);
+    state.activity.unshift(`${input.type === "SALARY" ? "Salary" : input.type === "BONUS" ? "Bonus" : input.type === "DEDUCTION" ? "Deduction" : input.type === "FINE" ? "Fine" : input.type === "OTHER_PAYMENT" ? "Other payment" : "Required payment"} saved for ${staffName(staff)}`);
+    await saveFinanceState(state);
+    return entry;
+  }
+  async createPayrollRun(period: string) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw new Error("Choose a valid payroll month.");
+    const state = await this.getState();
+    const academics = await getAcademicsState();
+    const eligible = academics.staff.filter((item) => item.status === "ACTIVE" && (item.salaryAmount ?? 0) > 0);
+    const existing = new Set(state.staffFinanceEntries.filter((item) => item.type === "SALARY" && (item.payrollPeriod ?? item.dueDate?.slice(0, 7)) === period).map((item) => item.staffUserId));
+    const lastDay = new Date(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0).getDate();
+    const dueDate = `${period}-${String(lastDay).padStart(2, "0")}`;
+    const now = new Date().toISOString();
+    let created = 0;
+    for (const staff of eligible) {
+      if (existing.has(staff.userId)) continue;
+      state.staffFinanceEntries.unshift({
+        id: uid("payroll"), staffUserId: staff.userId, type: "SALARY", title: `Salary · ${period}`,
+        amount: staff.salaryAmount ?? 0, status: "YET_TO_BE_PAID", dueDate, payrollPeriod: period,
+        createdAt: now, updatedAt: now,
+      });
+      created++;
+    }
+    if (created) {
+      state.activity.unshift(`Payroll prepared for ${period} - ${created} staff salaries`);
+      await saveFinanceState(state);
+    }
+    return { period, created, alreadyPrepared: created === 0 && eligible.length > 0 };
+  }
+  async updateStaffFinanceEntryStatus(entryId: string, status: StaffFinanceEntry["status"], input?: { method?: string; reference?: string; note?: string }) {
+    const state = await this.getState();
+    const index = state.staffFinanceEntries.findIndex((entry) => entry.id === entryId);
+    if (index < 0) throw new Error("Finance entry not found.");
+    const paid = status === "PAID";
+    const updated: StaffFinanceEntry = {
+      ...state.staffFinanceEntries[index],
+      status,
+      paidAt: paid ? new Date().toISOString().slice(0, 10) : null,
+      paymentMethod: paid ? input?.method ?? state.staffFinanceEntries[index].paymentMethod : null,
+      paymentReference: paid ? input?.reference ?? state.staffFinanceEntries[index].paymentReference : null,
+      paymentNote: input?.note?.trim() || state.staffFinanceEntries[index].paymentNote,
+      updatedAt: new Date().toISOString(),
+    };
+    state.staffFinanceEntries[index] = updated;
+    if (paid && updated.type === "SALARY" && updated.payrollPeriod) {
+      state.staffFinanceEntries = state.staffFinanceEntries.map((entry) => entry.staffUserId === updated.staffUserId && entry.type === "DEDUCTION" && entry.payrollPeriod === updated.payrollPeriod
+        ? { ...entry, status: "PAID", paidAt: updated.paidAt, paymentMethod: "Withheld from salary", updatedAt: new Date().toISOString() }
+        : entry);
+    }
+    state.activity.unshift(`${updated.title} marked ${status === "PAID" ? "paid" : "unpaid"}.`);
+    await saveFinanceState(state);
+    return updated;
+  }
+  async payStaffFinanceEntry(entryId: string, input: { method: string; reference: string; paymentDate?: string; note?: string }) {
+    const state = await this.getState();
+    const index = state.staffFinanceEntries.findIndex((entry) => entry.id === entryId);
+    if (index < 0) throw new Error("Finance entry not found.");
+    const entry = state.staffFinanceEntries[index];
+    if (!["FINE", "REQUIRED_PAYMENT"].includes(entry.type)) throw new Error("Only fines and required payments can be paid.");
+    if (!input.reference.trim()) throw new Error("Payment reference is required.");
+    const updated: StaffFinanceEntry = {
+      ...entry,
+      status: "PAID",
+      paidAt: input.paymentDate ?? new Date().toISOString().slice(0, 10),
+      paymentMethod: input.method,
+      paymentReference: input.reference.trim(),
+      paymentNote: input.note?.trim() || null,
+      updatedAt: new Date().toISOString(),
+    };
+    state.staffFinanceEntries[index] = updated;
+    state.activity.unshift(`${entry.title} marked paid by staff.`);
+    await saveFinanceState(state);
+    return updated;
   }
   async getReceipts() { return (await this.getState()).receipts; }
   async matchTransaction(transactionId: string, invoiceId: string) {

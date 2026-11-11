@@ -7,6 +7,6 @@ export const defaultSchoolSettings: SchoolSettings = {
   email: "", primaryPhone: "",
   address: "", city: "", state: "", country: "",
   branding: { primaryColor: "#075985", secondaryColor: "#0F766E", accentColor: "#F59E0B" },
-  currentAcademicSession: "", currentTerm: "First Term",
+  currentAcademicSession: "", currentTerm: "First Term", historicalEditingEnabled: false,
   updatedAt: "",
 };

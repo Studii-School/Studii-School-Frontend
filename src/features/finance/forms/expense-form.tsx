@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/number-input";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { useFinance } from "../finance-context";
 
@@ -42,7 +43,7 @@ export function ExpenseForm({ onClose }: { onClose: () => void }) {
     <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
       <label className="text-sm font-medium sm:col-span-2">Title<Input className="mt-2" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Generator diesel" /></label>
       <label className="text-sm font-medium">Category<select className="mt-2 h-11 w-full rounded-[10px] border bg-surface px-3" value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label>
-      <label className="text-sm font-medium">Amount<Input className="mt-2" type="number" min="1" value={amount} onChange={(event) => setAmount(Number(event.target.value))} /></label>
+      <label className="text-sm font-medium">Amount<MoneyInput className="mt-2" min="1" value={amount} onValueChange={setAmount} /></label>
       <label className="text-sm font-medium">Date<Input className="mt-2" type="date" value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} /></label>
       <label className="text-sm font-medium sm:col-span-2">Note<textarea className="mt-2 min-h-24 w-full rounded-[10px] border bg-surface p-3" value={note} onChange={(event) => setNote(event.target.value)} /></label>
       {error && <p role="alert" className="rounded-[8px] bg-red-50 p-3 text-sm text-danger sm:col-span-2">{error}</p>}

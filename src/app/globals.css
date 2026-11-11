@@ -1,11 +1,26 @@
 @import "tailwindcss";
 
+@keyframes drawer-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
 .dashboard-grid .react-grid-item {
   min-width: 0;
   transition:
     transform 180ms ease,
     width 180ms ease,
     height 180ms ease;
+}
+
+.dashboard-grid [data-widget-id] .overflow-auto {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.dashboard-grid [data-widget-id] h2 {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .dashboard-grid .react-grid-item.react-grid-placeholder {
@@ -72,15 +87,77 @@
   --color-school-primary: var(--school-primary);
   --color-school-secondary: var(--school-secondary);
   --color-school-accent: var(--school-accent);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-app-sans);
 }
 
 * { border-color: var(--border); }
+
+@media screen {
+  /* Keep spacing stable while hiding component borders in dark mode. */
+  html[data-portal-theme="dark"] * {
+    border-color: transparent !important;
+  }
+
+  /* Borderless form controls still need a visible surface. */
+  html[data-portal-theme="dark"] :is(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+    select,
+    textarea,
+    [role="checkbox"][aria-checked="false"]
+  ) {
+    background-color: var(--surface-muted);
+  }
+}
+
 html { background: var(--background); }
-body { min-height: 100vh; background: var(--background); color: var(--foreground); }
+body { min-height: 100vh; background: var(--background); color: var(--foreground); font-feature-settings: "cv02", "cv03", "cv04", "cv11"; text-rendering: optimizeLegibility; }
 button, a, input, select { outline: none; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
+table {
+  counter-reset: table-row-number;
+}
+
+table thead tr::before,
+table tbody tr::before {
+  display: table-cell;
+  width: 3.25rem;
+  padding: 0.75rem 1rem;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+table thead tr::before {
+  content: "#";
+  font-weight: 500;
+}
+
+table tbody tr {
+  counter-increment: table-row-number;
+}
+
+table tbody tr::before {
+  content: counter(table-row-number);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+table tbody tr:has(td[colspan]) {
+  counter-increment: none;
+}
+
+table tbody tr:has(td[colspan])::before {
+  content: none;
+  display: none;
+}
+
+.student-directory-table thead tr::before,
+.student-directory-table tbody tr::before {
+  content: none;
+  display: none;
 }
 
 @utility scrollbar-thin {
@@ -93,8 +170,17 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 
 @media print {
-  body * { visibility: hidden; }
-  .receipt-print, .receipt-print * { visibility: visible; }
+  body * { visibility: hidden !important; }
+  .receipt-print, .receipt-print * { visibility: visible !important; }
   .receipt-print { position: absolute; inset: 0; width: 100%; max-width: none !important; border: 0 !important; background: white !important; color: black !important; }
+  #staff-payslip, #staff-payslip * { visibility: visible !important; }
+  #staff-payslip { position: absolute; inset: 0 auto auto 0; width: 100%; border: 0 !important; box-shadow: none !important; background: white !important; color: black !important; }
+  #staff-payslip .payslip-hide { display: none !important; }
   .receipt-actions, nav, header, aside { display: none !important; }
+}
+
+.payslip-hide { display: flex; }
+@keyframes drawer-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
 }

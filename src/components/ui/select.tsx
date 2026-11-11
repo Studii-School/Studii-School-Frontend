@@ -24,6 +24,7 @@ interface SelectProps {
   searchable?: boolean;
   clearable?: boolean;
   className?: string;
+  triggerClassName?: string;
 }
 
 export function Select({
@@ -38,6 +39,7 @@ export function Select({
   searchable,
   clearable,
   className,
+  triggerClassName,
 }: SelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -85,6 +87,7 @@ export function Select({
         className={cn(
           "flex h-11 w-full min-w-0 max-w-full items-center justify-between gap-2 rounded-[10px] border bg-surface px-3 text-left text-sm focus:border-[var(--school-primary)] disabled:opacity-50",
           error && "border-danger",
+          triggerClassName,
         )}
         onClick={() => setOpen((current) => !current)}
         onKeyDown={(event) => {

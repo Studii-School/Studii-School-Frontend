@@ -92,6 +92,9 @@ function normalizeBreakpoint(
     widgets.filter((widget) => widget.isVisible).map((widget) => widget.widgetId),
   );
   const source = Array.isArray(value) ? value.filter(isRecord) : [];
+  const hasRetiredWidgets = source.some((item) =>
+    typeof item.i === "string" && !getWidgetDefinition(role, item.i),
+  );
   const layout: DashboardGridItem[] = [];
 
   for (const widget of [...widgets].sort((a, b) => a.order - b.order)) {
@@ -124,7 +127,7 @@ function normalizeBreakpoint(
       maxH,
     };
     layout.push(
-      layout.some((item) => collides(candidate, item))
+      hasRetiredWidgets || layout.some((item) => collides(candidate, item))
         ? findFirstPosition(layout, widget.widgetId, candidate, columns)
         : candidate,
     );
@@ -140,8 +143,10 @@ export function validateDashboardLayout(
 ): UserDashboardLayout {
   const record = isRecord(value) ? value : {};
   const widgets = normalizeWidgets(role, record.widgets);
-  const storedLayouts = isRecord(record.layouts) ? record.layouts : {};
-  const defaults = getDefaultDashboardLayout(userId, role);
+  // Repack older, oversized layouts once, retaining widget order and visibility.
+  const storedLayouts = record.version === DASHBOARD_LAYOUT_VERSION && isRecord(record.layouts)
+    ? record.layouts
+    : {};
 
   const layouts = Object.fromEntries(
     breakpoints.map((breakpoint) => [
@@ -149,7 +154,7 @@ export function validateDashboardLayout(
       normalizeBreakpoint(
         role,
         breakpoint,
-        storedLayouts[breakpoint] ?? defaults.layouts[breakpoint],
+        storedLayouts[breakpoint] ?? [],
         widgets,
       ),
     ]),

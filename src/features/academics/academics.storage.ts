@@ -7,10 +7,10 @@ import { inferTemplate } from "./academics.class-templates";
 import { buildClassDisplayName, sortClasses } from "./academics.class-utils";
 import type { AcademicsState, SchoolClass } from "./academics.types";
 
-export const ACADEMICS_STORAGE_KEY = "schoolos.academics.v2";
-const LEGACY_STORAGE_KEY = "schoolos.academics.v1";
+export const ACADEMICS_STORAGE_KEY = "schoolos.academics.v3";
+const LEGACY_STORAGE_KEYS = ["schoolos.academics.v2", "schoolos.academics.v1"];
 const emptyAcademicsState: AcademicsState = {
-  version: 2,
+  version: 3,
   classes: [],
   students: [],
   staff: [],
@@ -21,6 +21,7 @@ const emptyAcademicsState: AcademicsState = {
   studentDocuments: [],
   studentActivities: [],
   studentClassHistory: [],
+  studentEnrollments: [],
 };
 const demoClassIds = new Set([
   "class-jss1-gold",
@@ -59,27 +60,25 @@ function migrateClass(value: unknown, index: number): SchoolClass | null {
         ? value.arm.trim() || undefined
         : undefined;
   const template = inferTemplate(baseName);
-  const level = value.level === "PRIMARY" ? "PRIMARY" : "SECONDARY";
+  const level =
+    template?.level ??
+    (value.level === "PRIMARY" ? "PRIMARY" : "SECONDARY");
   const now = new Date().toISOString();
   return {
     id: value.id,
     schoolId:
       typeof value.schoolId === "string" ? value.schoolId : "school-001",
     level,
-    source:
-      value.source === "CUSTOM" || value.source === "STANDARD"
-        ? value.source
-        : template
-          ? "STANDARD"
-          : "CUSTOM",
+    source: template ? "STANDARD" : "CUSTOM",
     templateKey:
-      typeof value.templateKey === "string"
-        ? value.templateKey
-        : template?.key,
+      template?.key ??
+      (typeof value.templateKey === "string" ? value.templateKey : undefined),
     baseName,
     suffix,
     arm: suffix,
     displayName: buildClassDisplayName(baseName, suffix),
+    academicYear: typeof value.academicYear === "string" ? value.academicYear : undefined,
+    academicSessionId: typeof value.academicSessionId === "string" ? value.academicSessionId : undefined,
     sortOrder:
       typeof value.sortOrder === "number" && Number.isFinite(value.sortOrder)
         ? value.sortOrder
@@ -122,7 +121,7 @@ function migrateState(value: unknown): AcademicsState {
         .filter((item): item is SchoolClass => item !== null)
     : fallback.classes;
   const migrated: AcademicsState = {
-    version: 2,
+    version: 3,
     classes: sortClasses(classes),
     students: Array.isArray(value.students)
       ? (value.students as AcademicsState["students"])
@@ -151,6 +150,9 @@ function migrateState(value: unknown): AcademicsState {
     studentClassHistory: Array.isArray(value.studentClassHistory)
       ? (value.studentClassHistory as AcademicsState["studentClassHistory"])
       : fallback.studentClassHistory,
+    studentEnrollments: Array.isArray(value.studentEnrollments)
+      ? (value.studentEnrollments as AcademicsState["studentEnrollments"])
+      : fallback.studentEnrollments,
   };
   return removeDemoRecords(migrated);
 }
@@ -206,13 +208,18 @@ function removeDemoRecords(state: AcademicsState): AcademicsState {
         (!item.fromClassId || classIds.has(item.fromClassId)) &&
         classIds.has(item.toClassId),
     ),
+    studentEnrollments: state.studentEnrollments.filter(
+      (item) => studentIds.has(item.studentId) && classIds.has(item.classId),
+    ),
   };
 }
 
 export async function getAcademicsState() {
   const current = readStoredJson<unknown>(ACADEMICS_STORAGE_KEY, null);
-  const legacy =
-    current ?? readStoredJson<unknown>(LEGACY_STORAGE_KEY, emptyAcademicsState);
+  const legacy = current ?? LEGACY_STORAGE_KEYS.reduce<unknown>(
+    (found, key) => found ?? readStoredJson<unknown>(key, null),
+    null,
+  ) ?? emptyAcademicsState;
   const migrated = migrateState(legacy);
   writeStoredJson(ACADEMICS_STORAGE_KEY, migrated);
   return migrated;
@@ -226,6 +233,6 @@ export async function saveAcademicsState(state: AcademicsState) {
 
 export async function resetAcademicsState() {
   removeStoredValue(ACADEMICS_STORAGE_KEY);
-  removeStoredValue(LEGACY_STORAGE_KEY);
+  LEGACY_STORAGE_KEYS.forEach(removeStoredValue);
   return defaults();
 }

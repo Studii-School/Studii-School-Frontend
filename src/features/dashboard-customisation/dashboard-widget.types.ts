@@ -3,9 +3,9 @@ export type PortalRole = "admin" | "teacher" | "student" | "parent";
 export type DashboardBreakpoint = "xl" | "lg" | "md" | "sm" | "xs";
 
 export const DASHBOARD_BREAKPOINTS: Record<DashboardBreakpoint, number> = {
-  xl: 1440,
-  lg: 1200,
-  md: 768,
+  xl: 1200,
+  lg: 900,
+  md: 640,
   sm: 480,
   xs: 0,
 };
@@ -72,7 +72,7 @@ export interface UserDashboardWidget {
 }
 
 export interface UserDashboardLayout {
-  version: 2;
+  version: 3;
   schoolId: string;
   userId: string;
   role: PortalRole;

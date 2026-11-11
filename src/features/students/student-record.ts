@@ -2,7 +2,8 @@ import type { AcademicsState, Guardian } from "@/features/academics/academics.ty
 import type { AssignmentsState } from "@/features/assignments/assignments.types";
 import type { AttendanceRegister } from "@/features/attendance/attendance.types";
 import type { FinanceState } from "@/features/finance/finance.types";
-import { getAttendanceSummaryForStudent } from "@/features/attendance/attendance.utils";
+import { filterAttendanceByPeriod, filterAttendanceBySession, getAttendanceSummaryForStudent, type AttendancePeriod } from "@/features/attendance/attendance.utils";
+import { dateBelongsToPeriod } from "@/features/academic-period/period-scope-utils";
 
 export function buildStudentCompleteRecord(
   studentId: string,
@@ -10,6 +11,7 @@ export function buildStudentCompleteRecord(
   assignments: AssignmentsState,
   attendance: AttendanceRegister[],
   finance: FinanceState,
+  attendancePeriod?: AttendancePeriod,
 ) {
   const student = academics.students.find((item) => item.id === studentId);
   if (!student) return undefined;
@@ -38,8 +40,11 @@ export function buildStudentCompleteRecord(
           },
         ]
       : [];
-  const attendanceRecords = attendance
-    .filter((item) => item.status === "SUBMITTED")
+  const periodAttendance = attendancePeriod?.termId
+    ? filterAttendanceByPeriod(attendance, attendancePeriod)
+    : filterAttendanceBySession(attendance, attendancePeriod);
+  const attendanceRecords = periodAttendance
+    .filter((item) => item.status === "SUBMITTED" || item.status === "REOPENED")
     .flatMap((register) =>
       register.entries
         .filter((entry) => entry.studentId === studentId)
@@ -53,8 +58,9 @@ export function buildStudentCompleteRecord(
     )
     .sort((a, b) => b.date.localeCompare(a.date));
   const attendanceSummary = getAttendanceSummaryForStudent(
-    attendance,
+    periodAttendance,
     studentId,
+    attendancePeriod,
   );
   const classHistory = academics.studentClassHistory.filter(
     (item) => item.studentId === studentId,
@@ -87,11 +93,11 @@ export function buildStudentCompleteRecord(
     invoices.some((invoice) => invoice.id === receipt.invoiceId),
   );
   const documents = academics.studentDocuments.filter(
-    (item) => item.studentId === studentId,
+    (item) => item.studentId === studentId && dateBelongsToPeriod(item.uploadedAt, attendancePeriod),
   );
   const activities = [
     ...academics.studentActivities.filter(
-      (item) => item.studentId === studentId,
+      (item) => item.studentId === studentId && dateBelongsToPeriod(item.createdAt, attendancePeriod),
     ),
     ...attendanceRecords.map((item) => ({
       id: `attendance-${item.id}`,
@@ -123,7 +129,7 @@ export function buildStudentCompleteRecord(
       detail: `${item.reference} · ${item.status}`,
       createdAt: `${item.paymentDate}T12:00:00.000Z`,
     })),
-  ].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  ].filter((item) => dateBelongsToPeriod(item.createdAt, attendancePeriod)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return {
     student,
     currentClass,
@@ -156,6 +162,7 @@ export function studentOutstandingBalance(
 export function studentAttendancePercentage(
   studentId: string,
   attendance: AttendanceRegister[],
+  attendancePeriod?: AttendancePeriod,
 ) {
-  return getAttendanceSummaryForStudent(attendance, studentId).percentage;
+  return getAttendanceSummaryForStudent(attendance, studentId, attendancePeriod).percentage;
 }

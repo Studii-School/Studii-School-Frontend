@@ -77,15 +77,14 @@ function optionalString(value?: string) {
 }
 
 function announcementBody(input: Partial<AnnouncementInput>): BackendAnnouncementPayload {
-  const audiences = input.audiences ?? [];
   return {
     title: optionalString(input.title),
     summary: optionalString(input.summary),
     content: optionalString(input.content),
-    audiences,
-    selectedClassIds: audiences.includes("SELECTED_CLASSES")
-      ? input.selectedClassIds ?? []
-      : [],
+    audiences: input.audiences,
+    selectedClassIds: input.audiences
+      ? input.audiences.includes("SELECTED_CLASSES") ? input.selectedClassIds ?? [] : []
+      : undefined,
     status: input.status,
     isPinned: input.isPinned,
     publishAt: input.status === "PUBLISHED" ? optionalString(input.publishAt) : undefined,
@@ -107,10 +106,12 @@ function mapAnnouncement(item: BackendAnnouncement): Announcement {
     body: item.body ?? item.content ?? item.message ?? item.summary,
     audiences: item.audiences ?? ["EVERYONE"],
     selectedClassIds: item.selectedClassIds ?? item.selectedClasses ?? [],
+    sessionId: item.sessionId,
+    termId: item.termId,
     status: item.status ?? "DRAFT",
     isPinned: item.isPinned ?? false,
-    publishAt: item.publishAt,
-    expiresAt: item.expiresAt,
+    publishAt: item.publishAt?.slice(0, 10),
+    expiresAt: item.expiresAt?.slice(0, 10),
     attachmentName: item.attachmentName,
     ctaLabel: item.ctaLabel,
     ctaUrl: item.ctaUrl,

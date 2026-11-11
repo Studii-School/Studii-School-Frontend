@@ -1,6 +1,8 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
+import { ClickableTableRow } from "@/components/ui/clickable-table-row";
 import { EmptyState } from "@/components/ui/empty-state";
 import { formatNaira } from "@/lib/currency";
 import { useFinance } from "../finance-context";
@@ -14,8 +16,9 @@ function compactReference(payment: Payment) {
 }
 
 export function PaymentTable({ payments }: { payments: Payment[] }) {
-  const { state } = useFinance();
-  const invoiceById = new Map(state.invoices.map((invoice) => [invoice.id, invoice]));
+  const { allState } = useFinance();
+  const isAdmin = usePathname().startsWith("/admin/");
+  const invoiceById = new Map(allState.invoices.map((invoice) => [invoice.id, invoice]));
 
   if (!payments.length) {
     return <EmptyState title="No payments yet" description="Flutterwave and manually recorded payments will appear here." />;
@@ -26,7 +29,7 @@ export function PaymentTable({ payments }: { payments: Payment[] }) {
       <table className="w-full min-w-[980px] text-left text-sm">
         <thead className="bg-surface-muted text-xs uppercase text-muted">
           <tr>
-            {["Reference", "Student", "Class", "Amount", "Method", "Provider", "Date", "Status"].map((item) => (
+            {["Reference", "Student", "Class", "Invoice term", "Amount", "Method", "Provider", "Date", "Status"].map((item) => (
               <th key={item} className="px-4 py-3 font-medium">{item}</th>
             ))}
           </tr>
@@ -37,12 +40,13 @@ export function PaymentTable({ payments }: { payments: Payment[] }) {
             const fullReference = payment.txRef || payment.reference || payment.providerTransactionId || payment.id;
 
             return (
-              <tr key={payment.id}>
+              <ClickableTableRow key={payment.id} href={invoice && isAdmin ? `/admin/finance/invoices?invoice=${invoice.id}` : undefined} label={`payment from ${payment.student}`}>
                 <td className="px-4 py-3 font-medium">
                   <span title={fullReference} className="whitespace-nowrap">{compactReference(payment)}</span>
                 </td>
                 <td className="px-4 py-3">{payment.student}</td>
                 <td className="px-4 py-3">{invoice?.className ?? "Not set"}</td>
+                <td className="px-4 py-3">{invoice ? `${invoice.term} · ${invoice.academicSession}` : "Not set"}</td>
                 <td className="px-4 py-3 font-semibold">{formatNaira(payment.amount)}</td>
                 <td className="px-4 py-3">{payment.method}</td>
                 <td className="px-4 py-3">{payment.bankOrProvider ?? "School office"}</td>
@@ -50,7 +54,7 @@ export function PaymentTable({ payments }: { payments: Payment[] }) {
                 <td className="px-4 py-3">
                   <Badge tone={payment.status === "Successful" ? "success" : payment.status === "Failed" ? "danger" : "warning"}>{payment.status}</Badge>
                 </td>
-              </tr>
+              </ClickableTableRow>
             );
           })}
         </tbody>

@@ -131,7 +131,8 @@ export async function firstTimePassword(email: string, password: string) {
 
 export async function getProfile() {
   const data = await apiRequest<ProfileResponse>("/auth/profile");
-  return data && typeof data === "object" && "user" in data ? data.user : data;
+  const user = data && typeof data === "object" && "user" in data ? data.user : data;
+  return user;
 }
 
 export function logout(options: LogoutOptions = {}) {

@@ -36,6 +36,7 @@ export interface SchoolSettings {
   branding: SchoolBranding;
   currentAcademicSession: string;
   currentTerm: AcademicTerm;
+  historicalEditingEnabled?: boolean;
   resumptionDate?: string;
   closingDate?: string;
   updatedAt: string;

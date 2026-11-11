@@ -4,11 +4,16 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { AudiencePicker } from "@/components/shared/audience-picker";
 import { getClassOptions } from "@/features/academics/academics.class-utils";
 import { useAcademics } from "@/features/academics/academics-context";
-import { eventAudiences, eventCategories } from "./events.defaults";
+import { useAcademicPeriod } from "@/features/academic-period/academic-period-context";
+import { academicTermLabel } from "@/features/academic-period/academic-period.types";
+import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
+import { eventCategories } from "./events.defaults";
+import { eventAudienceOptions } from "./events-audience";
 import type {
-  EventAudience,
   EventCategory,
   SchoolEvent,
   SchoolEventInput,
@@ -18,6 +23,7 @@ const emptyEvent: SchoolEventInput = {
   title: "", shortDescription: "", description: "", category: "General",
   startDate: "", startTime: "", endDate: "", endTime: "", location: "",
   audience: ["Everyone"], selectedClasses: [], color: "#075985",
+  academicSession: "", term: "",
   isFeatured: false, isPublished: false,
 };
 const toInput = (event?: SchoolEvent): SchoolEventInput =>
@@ -35,6 +41,8 @@ const toInput = (event?: SchoolEvent): SchoolEventInput =>
         audience: event.audience,
         selectedClasses: event.selectedClasses,
         color: event.color,
+        academicSession: event.academicSession,
+        term: event.term,
         isFeatured: event.isFeatured,
         isPublished: event.isPublished,
       }
@@ -52,28 +60,22 @@ export function EventForm({
   onCancel: () => void;
 }) {
   const { state } = useAcademics();
+  const { selectedSession, selectedTerm } = useAcademicPeriod();
+  const { settings } = useSchoolSettings();
   const classOptions = getClassOptions(state);
-  const [form, setForm] = useState<SchoolEventInput>(() => toInput(event));
+  const currentSession = selectedSession?.name || settings.currentAcademicSession;
+  const currentTerm = selectedTerm ? academicTermLabel(selectedTerm.name) : settings.currentTerm;
+  const [form, setForm] = useState<SchoolEventInput>(() => ({
+    ...toInput(event),
+    academicSession: event?.academicSession || currentSession,
+    term: event?.term || currentTerm,
+  }));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const patch = <K extends keyof SchoolEventInput>(
     key: K,
     value: SchoolEventInput[K],
   ) => setForm((current) => ({ ...current, [key]: value }));
-  const toggleAudience = (audience: EventAudience) =>
-    patch(
-      "audience",
-      form.audience.includes(audience)
-        ? form.audience.filter((item) => item !== audience)
-        : [...form.audience, audience],
-    );
-  const toggleClass = (classId: string) =>
-    patch(
-      "selectedClasses",
-      form.selectedClasses?.includes(classId)
-        ? form.selectedClasses.filter((id) => id !== classId)
-        : [...(form.selectedClasses ?? []), classId],
-    );
   const validate = () => {
     const next: Record<string, string> = {};
     if (!form.title.trim()) next.title = "Event title is required.";
@@ -131,33 +133,13 @@ export function EventForm({
       </div>
       <fieldset>
         <legend className={labelClass}>Audience</legend>
-        <div className="flex flex-wrap gap-2">
-          {eventAudiences.map((audience) => (
-            <label key={audience} className="flex min-h-10 items-center gap-2 rounded-[10px] border px-3 text-sm">
-              <input type="checkbox" checked={form.audience.includes(audience)} onChange={() => toggleAudience(audience)} />
-              {audience}
-            </label>
-          ))}
-        </div>
+        <AudiencePicker options={eventAudienceOptions} everyone="Everyone" classesValue="Selected Classes" values={form.audience} onChange={(values) => patch("audience", values)} classOptions={classOptions} selectedClasses={form.selectedClasses ?? []} onClassesChange={(ids) => patch("selectedClasses", ids)} />
         {errors.audience && <p className="mt-1 text-xs text-danger">{errors.audience}</p>}
+        {errors.classes && <p className="mt-1 text-xs text-danger">{errors.classes}</p>}
       </fieldset>
-      {form.audience.includes("Selected Classes") && (
-        <fieldset>
-          <legend className={labelClass}>Selected classes</legend>
-          <div className="flex flex-wrap gap-2">
-            {classOptions.map((item) => (
-              <label key={item.value} className="flex items-center gap-2 rounded-[10px] border px-3 py-2 text-sm">
-                <input type="checkbox" checked={form.selectedClasses?.includes(item.value) ?? false} onChange={() => toggleClass(item.value)} />
-                {item.label}
-              </label>
-            ))}
-          </div>
-          {errors.classes && <p className="mt-1 text-xs text-danger">{errors.classes}</p>}
-        </fieldset>
-      )}
-      <div className="flex flex-wrap gap-4">
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.isFeatured} onChange={(e) => patch("isFeatured", e.target.checked)} />Featured event</label>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.isPublished} onChange={(e) => patch("isPublished", e.target.checked)} />Publish event</label>
+      <div className="flex items-center justify-between gap-3 rounded-xl border bg-surface-muted/40 p-3">
+        <div><p className="text-sm font-semibold">Publish event</p><p className="text-xs text-muted">{form.isPublished ? "Visible to the selected audience" : "Saved as a draft"}</p></div>
+        <Switch checked={form.isPublished} onCheckedChange={(value) => patch("isPublished", value)} label="Publish event" />
       </div>
       <div className="flex justify-end gap-2 border-t pt-4">
         <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>

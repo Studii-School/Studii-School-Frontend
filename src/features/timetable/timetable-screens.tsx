@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CalendarDays, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { SectionCard } from "@/components/dashboard/section-card";
 import { Badge } from "@/components/ui/badge";
@@ -9,15 +9,20 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import { useAcademics } from "@/features/academics/academics-context";
 import { getAccessibleClassesForTeacher, getClassById, getTeacherByUserId } from "@/features/academics/academics.selectors";
 import { resolveStudentSession } from "@/features/academics/student-session";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
+import { useAcademicPeriod } from "@/features/academic-period/academic-period-context";
+import { academicTermLabel } from "@/features/academic-period/academic-period.types";
+import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
 import { readStoredToken } from "@/lib/api";
 import { readStoredUser } from "@/lib/auth";
 import { timetableRepository } from "./timetable.repository";
 import { TIMETABLE_STORAGE_KEY } from "./timetable.storage";
+import { visibleTimetableEntries } from "./timetable-period-utils";
 import type { AcademicsState, Student } from "@/features/academics/academics.types";
 import type { TimetableDay, TimetableEntry, TimetableInput } from "./timetable.types";
 
@@ -32,10 +37,6 @@ const hasBackendSession = () => Boolean(readStoredToken());
 
 function currentUserId() {
   return readStoredUser()?.id ?? fallbackTeacherId;
-}
-
-function currentStudent(academics: AcademicsState) {
-  return resolveStudentSession(academics, readStoredUser(), fallbackStudentId).student;
 }
 
 function currentStudentClassId(academics: AcademicsState) {
@@ -95,16 +96,31 @@ function teacherName(academics: AcademicsState, teacherUserId: string) {
 
 function useTimetableEntries() {
   const [entries, setEntries] = useState<TimetableEntry[]>([]);
-  const refresh = async () => setEntries(await timetableRepository.list());
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+  const refresh = async () => {
+    try {
+      setEntries(await timetableRepository.list());
+      setError("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Timetable could not be loaded.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
   useEffect(() => {
-    void refresh();
+    let active = true;
+    void timetableRepository.list()
+      .then((items) => { if (active) { setEntries(items); setError(""); } })
+      .catch((caught) => { if (active) setError(caught instanceof Error ? caught.message : "Timetable could not be loaded."); })
+      .finally(() => { if (active) setIsLoading(false); });
     const sync = (event: StorageEvent) => {
       if (event.key === TIMETABLE_STORAGE_KEY) void refresh();
     };
     window.addEventListener("storage", sync);
-    return () => window.removeEventListener("storage", sync);
+    return () => { active = false; window.removeEventListener("storage", sync); };
   }, []);
-  return { entries, refresh };
+  return { entries, refresh, isLoading, error };
 }
 
 function TimetableGrid({ entries, academics, title }: { entries: TimetableEntry[]; academics: AcademicsState; title?: string }) {
@@ -119,6 +135,7 @@ function TimetableGrid({ entries, academics, title }: { entries: TimetableEntry[
             {dayRows.map((entry) => <div key={entry.id} className="rounded-lg border p-3">
               <p className="text-xs font-semibold text-[var(--school-primary)]">{timeRange(entry)}</p>
               <p className="mt-1 font-semibold">{subjectName(academics, entry.subjectId)}</p>
+              <p className="text-xs text-muted">{getClassById(academics, entry.classId)?.displayName ?? entry.classId}</p>
               <p className="text-xs text-muted">{teacherName(academics, entry.teacherUserId)}{entry.room ? ` - ${entry.room}` : ""}</p>
               {entry.note && <p className="mt-2 text-xs text-muted">{entry.note}</p>}
             </div>)}
@@ -132,29 +149,30 @@ function TimetableGrid({ entries, academics, title }: { entries: TimetableEntry[
 
 export function TeacherTimetableScreen() {
   const { state: academics } = useAcademics();
+  const { selectedSession, selectedTerm, scope } = useAcademicPeriod();
+  const { settings } = useSchoolSettings();
   const { toast, confirm } = useActionFeedback();
-  const { entries, refresh } = useTimetableEntries();
+  const { entries, refresh, isLoading, error } = useTimetableEntries();
+  const academicSession = selectedSession?.name || settings.currentAcademicSession;
+  const term = selectedTerm ? academicTermLabel(selectedTerm.name) : settings.currentTerm;
+  const academicSessionId = selectedSession?.id;
+  const termId = selectedTerm?.id;
+  const periodEntries = visibleTimetableEntries(entries, { academicSessionId, termId, academicSession, term, isCurrentPeriod: scope.isCurrentPeriod }, hasBackendSession());
   const teacherId = currentUserId();
   const classes = getAccessibleClassesForTeacher(academics, teacherId);
   const [selectedClassId, setSelectedClassId] = useState(classes[0]?.id ?? "");
-  const selectedClass = getClassById(academics, selectedClassId);
-  const subjects = subjectOptions(academics, selectedClassId, teacherId);
+  const activeClassId = classes.some((item) => item.id === selectedClassId) ? selectedClassId : classes[0]?.id ?? "";
+  const selectedClass = getClassById(academics, activeClassId);
+  const subjects = subjectOptions(academics, activeClassId, teacherId);
   const [form, setForm] = useState<TimetableInput>({ classId: selectedClassId, subjectId: subjects[0]?.value ?? "", day: "MONDAY", startTime: "08:00", endTime: "08:40", room: "", note: "" });
-  const classEntries = entries.filter((entry) => entry.classId === selectedClassId);
-  const myEntries = entries.filter((entry) => entry.teacherUserId === teacherId);
-
-  useEffect(() => {
-    if (!selectedClassId && classes[0]) setSelectedClassId(classes[0].id);
-  }, [classes, selectedClassId]);
-  useEffect(() => {
-    const nextSubjects = subjectOptions(academics, selectedClassId, teacherId);
-    setForm((current) => ({ ...current, classId: selectedClassId, subjectId: nextSubjects.some((item) => item.value === current.subjectId) ? current.subjectId : nextSubjects[0]?.value ?? "" }));
-  }, [academics, selectedClassId, teacherId]);
+  const activeSubjectId = subjects.some((item) => item.value === form.subjectId) ? form.subjectId : subjects[0]?.value ?? "";
+  const classEntries = periodEntries.filter((entry) => entry.classId === activeClassId);
+  const myEntries = periodEntries.filter((entry) => entry.teacherUserId === teacherId);
 
   const patch = <K extends keyof TimetableInput>(key: K, value: TimetableInput[K]) => setForm((current) => ({ ...current, [key]: value }));
   const save = async () => {
     try {
-      await timetableRepository.save(teacherId, form);
+      await timetableRepository.save(teacherId, { ...form, classId: activeClassId, subjectId: activeSubjectId, academicSessionId, termId, academicSession, term }, undefined, scope.isCurrentPeriod);
       await refresh();
       toast("Timetable entry saved.", "success");
     } catch (error) {
@@ -174,14 +192,15 @@ export function TeacherTimetableScreen() {
   });
 
   return <>
-    <PageHeader title="Timetable" description="Create and manage schedules for classes assigned to you." />
+    <PageHeader title="Timetable" description="Manage the school weekly schedule for classes assigned to you." />
+    {error && <p role="alert" className="mb-5 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
     {!classes.length ? <EmptyState title="No assigned classes" description="Ask admin to assign this teacher to a class before creating timetables." /> : <>
       <div className="mb-5 grid gap-4 xl:grid-cols-[1fr_1.2fr]">
         <Card className="p-5">
           <h2 className="font-semibold">Create period</h2>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <Select label="Class" value={selectedClassId} onChange={setSelectedClassId} options={classes.map((item) => ({ value: item.id, label: item.displayName }))} />
-            <Select label="Subject" value={form.subjectId} onChange={(value) => patch("subjectId", value)} options={subjects} />
+            <Select label="Class" value={activeClassId} onChange={setSelectedClassId} options={classes.map((item) => ({ value: item.id, label: item.displayName }))} />
+            <Select label="Subject" value={activeSubjectId} onChange={(value) => patch("subjectId", value)} options={subjects} />
             <Select label="Day" value={form.day} onChange={(value) => patch("day", value as TimetableDay)} options={days.map((day) => ({ value: day, label: dayLabel(day) }))} />
             <label className="text-sm font-medium">Room<Input className="mt-2" value={form.room ?? ""} onChange={(event) => patch("room", event.target.value)} placeholder="Lab 1, Room 4..." /></label>
             <label className="text-sm font-medium">Start time<Input className="mt-2" type="time" value={form.startTime} onChange={(event) => patch("startTime", event.target.value)} /></label>
@@ -201,36 +220,77 @@ export function TeacherTimetableScreen() {
           </div>
         </Card>
       </div>
-      <TimetableGrid entries={myEntries} academics={academics} title="My teaching week" />
+      {isLoading ? <p className="py-8 text-center text-sm text-muted">Loading timetable...</p> : <TimetableGrid entries={myEntries} academics={academics} title="My teaching week" />}
     </>}
   </>;
 }
 
 export function StudentTimetableScreen() {
   const { state: academics } = useAcademics();
-  const { entries } = useTimetableEntries();
-  const student = currentStudent(academics);
+  const { selectedSession, selectedTerm, scope } = useAcademicPeriod();
+  const { settings } = useSchoolSettings();
+  const { entries, isLoading, error } = useTimetableEntries();
+  const academicSession = selectedSession?.name || settings.currentAcademicSession;
+  const term = selectedTerm ? academicTermLabel(selectedTerm.name) : settings.currentTerm;
+  const periodEntries = visibleTimetableEntries(entries, { academicSessionId: selectedSession?.id, termId: selectedTerm?.id, academicSession, term, isCurrentPeriod: scope.isCurrentPeriod }, hasBackendSession());
   const studentClassId = currentStudentClassId(academics);
   const rows = hasBackendSession()
-    ? entries
-    : entries.filter((entry) => entry.classId === studentClassId);
+    ? periodEntries
+    : periodEntries.filter((entry) => entry.classId === studentClassId);
   const schoolClass = studentClassId ? getClassById(academics, studentClassId) : undefined;
   return <>
     <PageHeader title="Timetable" description={schoolClass ? `Weekly timetable for ${schoolClass.displayName}.` : "Your class timetable."} />
-    {studentClassId || hasBackendSession() ? <TimetableGrid entries={rows} academics={academics} /> : <EmptyState title="Student class not found" description="Your timetable appears after your student profile is linked to a class." />}
+    {error ? <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p> :
+      isLoading ? <p className="py-8 text-center text-sm text-muted">Loading timetable...</p> :
+      studentClassId || hasBackendSession() ? <TimetableGrid entries={rows} academics={academics} /> : <EmptyState title="Student class not found" description="Your timetable appears after your student profile is linked to a class." />}
   </>;
 }
 
 export function ParentTimetableScreen() {
   const { state: academics } = useAcademics();
-  const { entries } = useTimetableEntries();
+  const { selectedSession, selectedTerm, scope } = useAcademicPeriod();
+  const { settings } = useSchoolSettings();
+  const { entries, isLoading, error } = useTimetableEntries();
+  const academicSession = selectedSession?.name || settings.currentAcademicSession;
+  const term = selectedTerm ? academicTermLabel(selectedTerm.name) : settings.currentTerm;
+  const periodEntries = visibleTimetableEntries(entries, { academicSessionId: selectedSession?.id, termId: selectedTerm?.id, academicSession, term, isCurrentPeriod: scope.isCurrentPeriod }, hasBackendSession());
   const children = currentParentChildren(academics);
   const [selected, setSelected] = useState(children[0]?.id ?? "");
   const child = children.find((item) => item.id === selected) ?? children[0];
-  const rows = entries.filter((entry) => entry.classId === child?.classId);
+  const rows = child?.classId
+    ? periodEntries.filter((entry) => entry.classId === child.classId)
+    : hasBackendSession() ? periodEntries : [];
   return <>
     <PageHeader title="Children's Timetable" description="View class schedules for linked children." />
-    {children.length ? <Select className="mb-5 max-w-sm" label="Child" value={child?.id ?? selected} onChange={setSelected} options={children.map((item: Student) => ({ value: item.id, label: `${item.firstName} ${item.lastName}` }))} /> : <EmptyState title="No linked children" description="Linked children will appear once parent records are connected." />}
-    {child && <TimetableGrid entries={rows} academics={academics} title={`${child.firstName}'s week`} />}
+    {children.length ? <Select className="mb-5 max-w-sm" label="Child" value={child?.id ?? selected} onChange={setSelected} options={children.map((item: Student) => ({ value: item.id, label: `${item.firstName} ${item.lastName}` }))} /> : !hasBackendSession() && <EmptyState title="No linked children" description="Linked children will appear once parent records are connected." />}
+    {error ? <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p> :
+      isLoading ? <p className="py-8 text-center text-sm text-muted">Loading timetable...</p> :
+      (child || hasBackendSession()) && <TimetableGrid entries={rows} academics={academics} title={child ? `${child.firstName}'s week` : "Linked classes"} />}
   </>;
+}
+
+export function TeacherTimetableModal({ teacherUserId, teacherName: name, onClose }: {
+  teacherUserId: string;
+  teacherName: string;
+  onClose: () => void;
+}) {
+  const { state: academics } = useAcademics();
+  const { selectedSession, selectedTerm, scope } = useAcademicPeriod();
+  const { settings } = useSchoolSettings();
+  const { entries, isLoading, error } = useTimetableEntries();
+  const academicSession = selectedSession?.name || settings.currentAcademicSession;
+  const term = selectedTerm ? academicTermLabel(selectedTerm.name) : settings.currentTerm;
+  const rows = visibleTimetableEntries(entries, {
+    academicSessionId: selectedSession?.id,
+    termId: selectedTerm?.id,
+    academicSession,
+    term,
+    isCurrentPeriod: scope.isCurrentPeriod,
+  }, hasBackendSession()).filter((entry) => entry.teacherUserId === teacherUserId);
+
+  return <Modal open title={`${name}'s timetable`} description={hasBackendSession() ? "School weekly timetable" : `${academicSession} · ${term}`} maxWidth="2xl" presentation="modal" onClose={onClose}>
+    {isLoading ? <p className="py-8 text-center text-sm text-muted">Loading timetable...</p> :
+      error ? <p role="alert" className="py-8 text-center text-sm text-red-600">{error}</p> :
+      <TimetableGrid entries={rows} academics={academics} title="Teaching week" />}
+  </Modal>;
 }

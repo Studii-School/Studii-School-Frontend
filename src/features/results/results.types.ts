@@ -39,6 +39,7 @@ export interface StudentResult {
   id: string;
   studentId: string;
   classId: string;
+  academicSessionId?: string;
   sessionId: string;
   termId: string;
   total: number;
@@ -55,6 +56,17 @@ export interface StudentResult {
   class?: { id: string; name: string; section?: string };
   subjectScores: SubjectScore[];
 }
+
+export interface ScoreProgress {
+  id: string;
+  studentId: string;
+  status: "IN_PROGRESS";
+  student?: StudentResult["student"];
+  class?: StudentResult["class"];
+  subjectScores: Array<Pick<SubjectScore, "id" | "subjectId" | "subject" | "components">>;
+}
+
+export type FamilyResult = StudentResult | ScoreProgress;
 
 export interface ResultClassSummary {
   id: string;

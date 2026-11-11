@@ -1,11 +1,15 @@
 "use client";
 
 /* eslint-disable react-hooks/set-state-in-effect -- repository hydration synchronizes browser storage with provider state. */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
+import { readStoredUser } from "@/lib/auth";
 import type { ConfiguredSchoolLevel } from "@/types/school-settings";
 import { AcademicsContext } from "./academics-context";
 import { academicsRepository } from "./academics.repository";
 import { ACADEMICS_STORAGE_KEY } from "./academics.storage";
+import { useAcademicPeriod } from "@/features/academic-period/academic-period-context";
+import { matchingClassForAcademicSession, studentClassForAcademicSession } from "@/features/academic-period/academic-context";
 import type {
   AcademicsState,
   ClassStatus,
@@ -17,12 +21,13 @@ import type {
   StudentStatus,
   Subject,
   SubjectInput,
+  TeacherClassAssignment,
   TeacherClassAssignmentType,
   UpdateClassInput,
 } from "./academics.types";
 
 const emptyAcademicsState: AcademicsState = {
-  version: 2,
+  version: 3,
   classes: [],
   students: [],
   staff: [],
@@ -33,6 +38,7 @@ const emptyAcademicsState: AcademicsState = {
   studentDocuments: [],
   studentActivities: [],
   studentClassHistory: [],
+  studentEnrollments: [],
 };
 
 function mergeSubjects(state: AcademicsState, subjects: Subject[]): AcademicsState {
@@ -50,18 +56,26 @@ function mergeSubjects(state: AcademicsState, subjects: Subject[]): AcademicsSta
 }
 
 export function AcademicsProvider({ children }: { children: React.ReactNode }) {
+  const { sessions, selectedSession, selectedTerm, scope } = useAcademicPeriod();
+  const pathname = usePathname();
+  const viewer = typeof window === "undefined" ? null : readStoredUser();
   const [state, setState] = useState<AcademicsState>(emptyAcademicsState);
   const [isLoading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
+  const refreshSequence = useRef(0);
 
   const refresh = useCallback(async () => {
+    const sequence = ++refreshSequence.current;
     try {
-      setState(await academicsRepository.getState());
+      const nextState = await academicsRepository.getState();
+      if (sequence !== refreshSequence.current) return;
+      setState(nextState);
       setError(undefined);
     } catch {
+      if (sequence !== refreshSequence.current) return;
       setError("Academic records could not be loaded.");
     } finally {
-      setLoading(false);
+      if (sequence === refreshSequence.current) setLoading(false);
     }
   }, []);
 
@@ -74,30 +88,60 @@ export function AcademicsProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("storage", sync);
   }, [refresh]);
 
+  useEffect(() => {
+    if (!scope.isReady) return;
+    const orderedSessions = [...sessions].sort((a, b) => a.startDate.localeCompare(b.startDate));
+    const activeSessions = orderedSessions.filter((session) => session.status === "ACTIVE");
+    if (!activeSessions.length) return;
+    void (async () => {
+      for (const session of activeSessions) {
+        const sessionIndex = orderedSessions.findIndex((item) => item.id === session.id);
+        const previousSession = sessionIndex > 0 ? orderedSessions[sessionIndex - 1] : undefined;
+        await academicsRepository.ensureSessionEnrollments(
+          {
+            schoolId: scope.schoolId,
+            academicSessionId: session.id,
+            academicSessionName: session.name,
+            previousAcademicSessionId: previousSession?.id,
+          },
+          true,
+        );
+      }
+      await refresh();
+    })();
+  }, [refresh, scope.isReady, scope.schoolId, sessions]);
+
   const createClass = useCallback(
     async (input: CreateClassInput) => {
-      await academicsRepository.createClass(input);
+      await academicsRepository.createClass({ ...input, schoolId: scope.schoolId, academicSessionId: scope.academicSessionId, academicYear: selectedSession?.name });
       await refresh();
     },
-    [refresh],
+    [refresh, scope.academicSessionId, selectedSession?.name],
   );
   const createStandardClass = useCallback(
     async (templateKey: string, input?: Partial<CreateClassInput>) => {
-      await academicsRepository.createStandardClass(templateKey, input);
+      await academicsRepository.createStandardClass(templateKey, { ...input, schoolId: scope.schoolId, academicSessionId: scope.academicSessionId, academicYear: selectedSession?.name });
       await refresh();
     },
-    [refresh],
+    [refresh, scope.academicSessionId, selectedSession?.name],
   );
   const createCustomClass = useCallback(
     async (input: CreateClassInput) => {
-      await academicsRepository.createCustomClass(input);
+      await academicsRepository.createCustomClass({ ...input, schoolId: scope.schoolId, academicSessionId: scope.academicSessionId, academicYear: selectedSession?.name });
       await refresh();
     },
-    [refresh],
+    [refresh, scope.academicSessionId, selectedSession?.name],
   );
   const updateClass = useCallback(
     async (id: string, input: UpdateClassInput) => {
       await academicsRepository.updateClass(id, input);
+      await refresh();
+    },
+    [refresh],
+  );
+  const setClassOwners = useCallback(
+    async (classId: string, classOwnerUserId: string, coOwnerUserIds: string[]) => {
+      await academicsRepository.setClassOwners(classId, classOwnerUserId, coOwnerUserIds);
       await refresh();
     },
     [refresh],
@@ -151,10 +195,10 @@ export function AcademicsProvider({ children }: { children: React.ReactNode }) {
   );
   const moveStudents = useCallback(
     async (ids: string[], classId: string) => {
-      await academicsRepository.moveStudents(ids, classId);
+      await academicsRepository.moveStudents(ids, classId, { schoolId: scope.schoolId, academicSessionId: scope.academicSessionId });
       await refresh();
     },
-    [refresh],
+    [refresh, scope.academicSessionId, scope.schoolId],
   );
   const saveTeacherAssignments = useCallback(
     async (input: {
@@ -162,17 +206,27 @@ export function AcademicsProvider({ children }: { children: React.ReactNode }) {
       classIds: string[];
       assignmentType: TeacherClassAssignmentType;
       subjectIds: string[];
+      assignmentPolicy?: "CO" | "MAIN" | "REPLACE";
+      assignmentSnapshot?: TeacherClassAssignment[];
       subjectAssignments?: Array<{ classId: string; subjectIds: string[] }>;
     }) => {
-      const items = await academicsRepository.saveTeacherAssignments(input);
+      const items = await academicsRepository.saveTeacherAssignments({ ...input, schoolId: scope.schoolId, academicSessionId: scope.academicSessionId, termId: scope.termId });
       await refresh();
       return items.length;
     },
-    [refresh],
+    [refresh, scope.academicSessionId, scope.schoolId, scope.termId],
   );
   const createStaff = useCallback(
     async (input: StaffInput) => {
       const item = await academicsRepository.createStaff(input);
+      await refresh();
+      return item;
+    },
+    [refresh],
+  );
+  const updateStaff = useCallback(
+    async (id: string, input: Partial<StaffInput>) => {
+      const item = await academicsRepository.updateStaff(id, input);
       await refresh();
       return item;
     },
@@ -238,8 +292,8 @@ export function AcademicsProvider({ children }: { children: React.ReactNode }) {
     [refresh],
   );
   const removeTeacherAssignment = useCallback(
-    async (id: string) => {
-      await academicsRepository.removeTeacherAssignment(id);
+    async (id: string, assignmentSnapshot?: TeacherClassAssignment[]) => {
+      await academicsRepository.removeTeacherAssignment(id, assignmentSnapshot, { academicSessionId: scope.academicSessionId, termId: scope.termId });
       await refresh();
       setState((current) => {
         const assignment = current.teacherAssignments.find((item) => item.id === id);
@@ -310,7 +364,7 @@ export function AcademicsProvider({ children }: { children: React.ReactNode }) {
         };
       });
     },
-    [refresh],
+    [refresh, scope.academicSessionId, scope.termId],
   );
   const createGuardian = useCallback(
     async (
@@ -325,21 +379,34 @@ export function AcademicsProvider({ children }: { children: React.ReactNode }) {
     },
     [refresh],
   );
-  const createStudent = useCallback(
-    async (input: StudentInput) => {
-      const item = await academicsRepository.createStudent(input);
+  const updateGuardian = useCallback(
+    async (
+      id: string,
+      input: Partial<Omit<Guardian, "id" | "schoolId" | "createdAt" | "updatedAt">>,
+    ) => {
+      const item = await academicsRepository.updateGuardian(id, input);
       await refresh();
       return item;
     },
     [refresh],
   );
-  const updateStudent = useCallback(
-    async (id: string, input: Partial<StudentInput>) => {
-      const item = await academicsRepository.updateStudent(id, input);
+  const createStudent = useCallback(
+    async (input: StudentInput) => {
+      const item = await academicsRepository.createStudent(input, { schoolId: scope.schoolId, academicSessionId: scope.academicSessionId });
       await refresh();
       return item;
     },
-    [refresh],
+    [refresh, scope.academicSessionId, scope.schoolId],
+  );
+  const updateStudent = useCallback(
+    async (id: string, input: Partial<StudentInput>) => {
+      const { classId, ...identityInput } = input;
+      const item = await academicsRepository.updateStudent(id, identityInput);
+      if (classId) await academicsRepository.moveStudents([id], classId, { schoolId: scope.schoolId, academicSessionId: scope.academicSessionId });
+      await refresh();
+      return classId ? { ...item, classId, currentClassId: classId } : item;
+    },
+    [refresh, scope.academicSessionId, scope.schoolId],
   );
   const assignStudentParents = useCallback(
     async (studentId: string, guardianIds: string[]) => {
@@ -358,12 +425,14 @@ export function AcademicsProvider({ children }: { children: React.ReactNode }) {
       classId: string;
       effectiveDate: string;
       reason: string;
+      academicSessionId?: string;
     }) => {
-      const item = await academicsRepository.moveStudentToClass(input);
+      const { academicSessionId, ...moveInput } = input;
+      const item = await academicsRepository.moveStudentToClass(moveInput, { schoolId: scope.schoolId, academicSessionId: academicSessionId ?? scope.academicSessionId });
       await refresh();
       return item;
     },
-    [refresh],
+    [refresh, scope.academicSessionId, scope.schoolId],
   );
   const updateStudentStatus = useCallback(
     async (id: string, status: StudentStatus) => {
@@ -395,15 +464,179 @@ export function AcademicsProvider({ children }: { children: React.ReactNode }) {
     [refresh],
   );
 
+  const scopedState = useMemo<AcademicsState>(() => {
+    if (!selectedSession) return state;
+    const selectedName = selectedSession.name.trim().toLowerCase();
+    const periodClasses = state.classes.filter((item) => {
+      if (item.schoolId !== scope.schoolId) return false;
+      if (item.academicSessionId) return item.academicSessionId === scope.academicSessionId;
+      if (item.academicYear?.trim()) return item.academicYear.trim().toLowerCase() === selectedName;
+      return selectedSession.status === "ACTIVE";
+    });
+    const relationshipClassIds = new Set<string>();
+    const portalRole = pathname.split("/")[1];
+    if (viewer?.id && portalRole === "teacher") {
+      const teacher = state.staff.find((item) => item.userId === viewer.id || item.id === viewer.id);
+      const teacherUserId = teacher?.userId ?? viewer.id;
+      [
+        ...(teacher?.assignedClassIds ?? []),
+        ...(teacher?.classTeacherClassIds ?? []),
+        ...(teacher?.assignedClasses ?? []).map((item) => item.id),
+        ...(teacher?.classTeacherClasses ?? []).map((item) => item.id),
+        ...(teacher?.teachingAssignments ?? []).map((item) => item.classId),
+        ...(teacher?.periodAssignments ?? []).map((item) => item.classId),
+        ...state.teacherAssignments.filter((item) => item.teacherUserId === teacherUserId || item.teacherUserId === viewer.id).map((item) => item.classId),
+        ...state.classes.filter((item) => item.classTeacherUserId === teacherUserId || item.assignedTeacherUserIds.includes(teacherUserId)).map((item) => item.id),
+      ].forEach((classId) => relationshipClassIds.add(classId));
+    } else if (viewer?.id && portalRole === "student") {
+      const student = state.students.find((item) => item.userId === viewer.id || item.id === viewer.id);
+      if (student?.classId) relationshipClassIds.add(student.classId);
+      if (student?.currentClassId) relationshipClassIds.add(student.currentClassId);
+    } else if (viewer?.id && portalRole === "parent") {
+      const parentIds = new Set([
+        viewer.id,
+        ...state.guardians.filter((item) => item.userId === viewer.id || Boolean(item.email && viewer.email && item.email.toLowerCase() === viewer.email.toLowerCase())).map((item) => item.id),
+      ]);
+      state.students.filter((item) => item.guardianIds.some((id) => parentIds.has(id))).forEach((student) => {
+        if (student.classId) relationshipClassIds.add(student.classId);
+        if (student.currentClassId) relationshipClassIds.add(student.currentClassId);
+      });
+    }
+    if ((portalRole === "parent" || portalRole === "student") && viewer?.id) {
+      state.studentEnrollments
+        .filter((item) => item.schoolId === scope.schoolId && item.academicSessionId === scope.academicSessionId && item.status === "ACTIVE")
+        .forEach((item) => relationshipClassIds.add(item.classId));
+    }
+    const classes = [...periodClasses];
+    for (const classId of relationshipClassIds) {
+      const relatedClass = state.classes.find((item) => item.id === classId && item.schoolId === scope.schoolId && item.status === "ACTIVE");
+      if (relatedClass && !matchingClassForAcademicSession(relatedClass, periodClasses)) classes.push(relatedClass);
+    }
+    const classIds = new Set(classes.map((item) => item.id));
+    const enrollments = state.studentEnrollments.filter((item) => item.schoolId === scope.schoolId && item.academicSessionId === scope.academicSessionId);
+    const enrollmentByStudent = new Map(enrollments.filter((item) => item.status === "ACTIVE").map((item) => [item.studentId, item]));
+    const students = state.students.map((student) => {
+      const enrollment = enrollmentByStudent.get(student.id);
+      const previousClass = state.classes.find((item) => item.id === student.classId);
+      const matchingClass = matchingClassForAcademicSession(previousClass, classes);
+      const hasPersistedEnrollmentHistory = state.studentEnrollments.some((item) => item.studentId === student.id);
+      const classId = periodClasses.some((item) => item.id === student.classId)
+        ? student.classId
+        : hasPersistedEnrollmentHistory
+          ? enrollment?.classId ?? ""
+          : studentClassForAcademicSession(student.classId, matchingClass?.id);
+      return {
+        ...student,
+        classId,
+        currentClassId: classId || student.currentClassId || student.classId || null,
+      };
+    });
+    const scopedForPeriod = state.teacherAssignments.filter((item) => item.academicSessionId === scope.academicSessionId && item.termId === scope.termId);
+    const teacherAssignments = state.teacherAssignments.filter((item) => {
+      if (item.isRemoved) return false;
+      if (!classIds.has(item.classId)) return false;
+      if (item.academicSessionId || item.termId) return item.academicSessionId === scope.academicSessionId && item.termId === scope.termId;
+      // Staff class and subject relationships are not period-scoped. Keep them
+      // visible across sessions unless that teacher's matching role was changed.
+      return !scopedForPeriod.some((scoped) =>
+        scoped.classId === item.classId && scoped.teacherUserId === item.teacherUserId && scoped.assignmentType === item.assignmentType,
+      );
+    });
+    if (selectedTerm && selectedSession) {
+      const periods = sessions.flatMap((session) => session.terms.map((term) => ({
+        sessionId: session.id,
+        termId: term.id,
+        startDate: term.startDate || session.startDate,
+        sessionName: session.name,
+      }))).sort((a, b) => a.startDate.localeCompare(b.startDate));
+      const selectedIndex = periods.findIndex((item) => item.sessionId === scope.academicSessionId && item.termId === scope.termId);
+      const classById = new Map(state.classes.map((item) => [item.id, item]));
+      const inherited = classes.flatMap((targetClass) => {
+        const normaliseClassName = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+        const targetNames = [targetClass.displayName, targetClass.baseName].map(normaliseClassName);
+        const matchesTargetClass = (item: AcademicsState["teacherAssignments"][number]) => {
+          const sourceClass = classById.get(item.classId);
+          const sourceNames = [item.className, sourceClass?.displayName, sourceClass?.baseName].filter(Boolean).map((name) => normaliseClassName(name!));
+          return sourceNames.some((name) => targetNames.includes(name));
+        };
+        const sourcePeriod = [...periods.slice(0, Math.max(0, selectedIndex))].reverse().find((period) =>
+          state.teacherAssignments.some((item) => item.academicSessionId === period.sessionId && item.termId === period.termId && matchesTargetClass(item)),
+        );
+        const sourcePeriodAssignments = sourcePeriod
+          ? state.teacherAssignments.filter((item) => item.academicSessionId === sourcePeriod.sessionId && item.termId === sourcePeriod.termId && matchesTargetClass(item))
+          : [];
+        const sourceLegacyAssignments = state.teacherAssignments.filter((item) => !item.isRemoved && !item.academicSessionId && !item.termId && matchesTargetClass(item));
+        const sourceAssignments = [
+          ...sourcePeriodAssignments.filter((item) => !item.isRemoved),
+          ...sourceLegacyAssignments.filter((legacy) => !sourcePeriodAssignments.some((periodAssignment) => {
+            if (periodAssignment.teacherUserId === legacy.teacherUserId && periodAssignment.assignmentType === legacy.assignmentType) return true;
+            if (legacy.assignmentType === "CLASS_TEACHER" && periodAssignment.assignmentType === "CLASS_TEACHER") {
+              return periodAssignment.assignmentRole !== "CO" && legacy.assignmentRole !== "CO";
+            }
+            return legacy.assignmentType === "SUBJECT_TEACHER" && periodAssignment.assignmentType === "SUBJECT_TEACHER" &&
+              periodAssignment.assignmentRole !== "CO" && legacy.subjectIds.some((subjectId) => periodAssignment.subjectIds.includes(subjectId));
+          })),
+        ];
+        return sourceAssignments.flatMap((item) => {
+          const exactForClass = teacherAssignments.filter((entry) => entry.classId === targetClass.id);
+          const removed = state.teacherAssignments.some((entry) =>
+            entry.isRemoved && entry.academicSessionId === scope.academicSessionId && entry.termId === scope.termId &&
+            entry.teacherUserId === item.teacherUserId && entry.classId === targetClass.id &&
+            entry.assignmentType === item.assignmentType && entry.subjectIds.join(",") === item.subjectIds.join(","),
+          );
+          if (removed || exactForClass.some((entry) => entry.teacherUserId === item.teacherUserId && entry.assignmentType === item.assignmentType)) return [];
+          let inheritedSubjectIds = item.subjectIds;
+          const mainAssignmentForType = exactForClass.find((entry) => entry.assignmentType === item.assignmentType && entry.assignmentRole !== "CO");
+          if (item.assignmentType === "CLASS_TEACHER" && mainAssignmentForType && item.assignmentRole !== "CO") return [];
+          if (item.assignmentType === "SUBJECT_TEACHER" && mainAssignmentForType) {
+            inheritedSubjectIds = item.subjectIds.filter((subjectId) => !mainAssignmentForType.subjectIds.includes(subjectId));
+            if (!inheritedSubjectIds.length) return [];
+          }
+          return [{
+            ...item,
+            id: `inherited:${scope.academicSessionId}:${scope.termId}:${targetClass.id}:${item.id}`,
+            classId: targetClass.id,
+            className: targetClass.displayName,
+            subjectIds: inheritedSubjectIds,
+            academicSessionId: scope.academicSessionId,
+            termId: scope.termId,
+          }];
+        });
+      });
+      teacherAssignments.push(...inherited.filter((item) => !teacherAssignments.some((existing) => existing.id === item.id)));
+    }
+    return {
+      ...state,
+      classes: classes.map((item) => {
+        const assignments = teacherAssignments.filter((entry) => entry.classId === item.id);
+        return {
+          ...item,
+          studentIds: students.filter((student) => student.status === "ACTIVE" && student.classId === item.id).map((student) => student.id),
+          classTeacherUserId: assignments.find((entry) => entry.assignmentType === "CLASS_TEACHER" && entry.assignmentRole !== "CO")?.teacherUserId ?? item.classTeacherUserId,
+          assignedTeacherUserIds: [...new Set([...item.assignedTeacherUserIds, ...assignments.map((entry) => entry.teacherUserId)])],
+        };
+      }),
+      students,
+      studentEnrollments: enrollments,
+      teacherAssignments,
+      staff: state.staff.map((item) => ({
+        ...item,
+        assignedClassIds: [...new Set(teacherAssignments.filter((entry) => entry.teacherUserId === item.userId).map((entry) => entry.classId))],
+        classTeacherClassIds: [...new Set(teacherAssignments.filter((entry) => entry.teacherUserId === item.userId && entry.assignmentType === "CLASS_TEACHER").map((entry) => entry.classId))],
+      })),
+    };
+  }, [pathname, scope.academicSessionId, scope.schoolId, scope.termId, selectedSession, selectedTerm, sessions, state, viewer?.email, viewer?.id]);
+
   const value = useMemo(
     () => ({
-      state,
+      state: scopedState,
       isLoading,
       error,
       createClass,
       createStandardClass,
       createCustomClass,
       updateClass,
+      setClassOwners,
       duplicateClass,
       reorderClasses,
       setClassStatus,
@@ -414,6 +647,7 @@ export function AcademicsProvider({ children }: { children: React.ReactNode }) {
       moveStudents,
       saveTeacherAssignments,
       createStaff,
+      updateStaff,
       assignStaffClasses,
       setStaffStatus,
       removeStaff,
@@ -423,6 +657,7 @@ export function AcademicsProvider({ children }: { children: React.ReactNode }) {
       removeSubject,
       removeTeacherAssignment,
       createGuardian,
+      updateGuardian,
       createStudent,
       updateStudent,
       assignStudentParents,
@@ -433,13 +668,14 @@ export function AcademicsProvider({ children }: { children: React.ReactNode }) {
       refresh,
     }),
     [
-      state,
+      scopedState,
       isLoading,
       error,
       createClass,
       createStandardClass,
       createCustomClass,
       updateClass,
+      setClassOwners,
       duplicateClass,
       reorderClasses,
       setClassStatus,
@@ -450,6 +686,7 @@ export function AcademicsProvider({ children }: { children: React.ReactNode }) {
       moveStudents,
       saveTeacherAssignments,
       createStaff,
+      updateStaff,
       assignStaffClasses,
       setStaffStatus,
       removeStaff,
@@ -459,6 +696,7 @@ export function AcademicsProvider({ children }: { children: React.ReactNode }) {
       removeSubject,
       removeTeacherAssignment,
       createGuardian,
+      updateGuardian,
       createStudent,
       updateStudent,
       assignStudentParents,

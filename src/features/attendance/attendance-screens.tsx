@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect -- register working rows reset when the selected record changes. */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { CheckCircle2, LockKeyhole } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { SectionCard } from "@/components/dashboard/section-card";
@@ -12,6 +12,10 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useAcademics } from "@/features/academics/academics-context";
+import { resolveStudentSession } from "@/features/academics/student-session";
+import type { Student } from "@/features/academics/academics.types";
+import { useAcademicPeriod } from "@/features/academic-period/academic-period-context";
+import { dateBelongsToPeriod } from "@/features/academic-period/period-scope-utils";
 import {
   getClassTeacherClassesForTeacher,
   isClassTeacherForClass,
@@ -20,18 +24,25 @@ import {
 } from "@/features/academics/academics.selectors";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { PinToDashboardButton } from "@/features/dashboard-customisation/pin-to-dashboard-button";
+import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
+import { PersonNameLink } from "@/features/people/person-name-link";
 import Link from "@/features/navigation-progress/navigation-progress-link";
 import { isAttendanceDateEditable, toLocalDateKey } from "@/lib/date-utils";
 import { readStoredUser } from "@/lib/auth";
+import { readStoredToken } from "@/lib/api";
 import { AdminAttendanceOverview } from "./admin-attendance-screens";
 import { useAttendance } from "./attendance-context";
+import { attendanceRepository } from "./attendance.repository";
 import type {
   AttendanceEntryInput,
+  AttendanceRegister,
   AttendanceStatus,
 } from "./attendance.types";
 import {
   attendanceHistoryForStudent,
+  filterAttendanceByPeriod,
   getAttendanceSummaryForStudent,
+  selectAttendanceStudentId,
 } from "./attendance.utils";
 
 const today = () => toLocalDateKey(new Date());
@@ -47,6 +58,30 @@ type WorkingEntry = {
   status: AttendanceStatus | "";
   note: string;
 };
+
+type AttendanceRosterStudent = Pick<Student, "id" | "firstName" | "lastName" | "admissionNumber" | "status">;
+
+function attendanceRoster(
+  currentStudents: AttendanceRosterStudent[],
+  register: AttendanceRegister | undefined,
+  knownStudents: Student[],
+): AttendanceRosterStudent[] {
+  if (!register?.entries.length) return currentStudents;
+  const recordedStudents = register.entries.map((entry): AttendanceRosterStudent => {
+    const known = currentStudents.find((student) => student.id === entry.studentId)
+      ?? knownStudents.find((student) => student.id === entry.studentId);
+    return known ?? {
+      id: entry.studentId,
+      firstName: entry.student?.firstName ?? "Student",
+      lastName: entry.student?.lastName ?? entry.studentId,
+      admissionNumber: entry.student?.admissionNumber ?? "",
+      status: "ACTIVE",
+    };
+  });
+  if (register.status === "SUBMITTED" || register.status === "REOPENED") return recordedStudents;
+  const currentIds = new Set(currentStudents.map((student) => student.id));
+  return [...currentStudents, ...recordedStudents.filter((student) => !currentIds.has(student.id))];
+}
 
 function studentName(student: { firstName: string; lastName: string }) {
   return `${student.firstName} ${student.lastName}`.trim();
@@ -95,7 +130,7 @@ function SummaryCards({
         <p className="text-xs text-muted">Attendance</p>
         <p className="mt-1 text-xl font-bold">
           {total
-            ? Math.round(((present + late + excused) / total) * 100)
+            ? Math.round(((present + late) / total) * 100)
             : 0}
           %
         </p>
@@ -105,13 +140,23 @@ function SummaryCards({
 }
 
 export function TeacherAttendanceScreen() {
-  const { registers, isLoading } = useAttendance();
+  const { registers, isLoading, error } = useAttendance();
   const { state } = useAcademics();
+  const { settings } = useSchoolSettings();
+  const { selectedTerm, scope } = useAcademicPeriod();
   const todayKey = today();
   const [date, setDate] = useState(todayKey);
   const teacherUserId = currentUserId();
   const classes = getClassTeacherClassesForTeacher(state, teacherUserId);
-  const dateLocked = !isAttendanceDateEditable(date);
+  const pastDate = !isAttendanceDateEditable(date);
+  const attendancePeriod = {
+    academicSessionId: scope.academicSessionId,
+    termId: scope.termId,
+    startDate: selectedTerm?.startDate || settings.resumptionDate,
+    endDate: selectedTerm?.endDate || settings.closingDate,
+    requireStartDate: Boolean(selectedTerm),
+  };
+  const periodRegisters = filterAttendanceByPeriod(registers, attendancePeriod);
 
   return (
     <>
@@ -131,27 +176,26 @@ export function TeacherAttendanceScreen() {
           </div>
         }
       />
+      {error && <p role="alert" className="mb-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</p>}
       <label className="mb-5 block max-w-xs text-sm font-medium">
         Register date
         <Input
           className="mt-2"
           type="date"
           value={date}
-          min={todayKey}
           max={todayKey}
           onChange={(event) => setDate(event.target.value)}
         />
       </label>
-      {dateLocked && (
+      {pastDate && (
         <div className="mb-5 flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm">
           <LockKeyhole size={17} />
-          Teachers can only mark attendance for today. Contact an administrator
-          if another date needs correction.
+          Past registers can be edited after an administrator reopens them.
         </div>
       )}
       <div className="grid gap-4 lg:grid-cols-2">
         {classes.map((schoolClass) => {
-          const register = registers.find(
+          const register = periodRegisters.find(
             (record) =>
               record.classId === schoolClass.id && record.date === date,
           );
@@ -176,7 +220,7 @@ export function TeacherAttendanceScreen() {
                         : "neutral"
                   }
                 >
-                  {dateLocked ? "READ ONLY" : (register?.status ?? "NOT STARTED")}
+                  {register?.status ?? "NOT STARTED"}
                 </Badge>
               </div>
               <div className="mt-5 flex items-center justify-between border-t pt-4">
@@ -189,7 +233,7 @@ export function TeacherAttendanceScreen() {
                   href={`/teacher/attendance/${schoolClass.id}?date=${date}`}
                   className="inline-flex min-h-10 items-center rounded-[10px] bg-[var(--school-primary)] px-4 text-sm font-semibold text-[var(--school-primary-foreground)]"
                 >
-                  {dateLocked ? "View register" : "Open register"}
+                  {pastDate && register?.status !== "REOPENED" ? "View register" : "Open register"}
                 </Link>
               </div>
             </Card>
@@ -212,34 +256,53 @@ export function TeacherAttendanceScreen() {
 export function AttendanceRegisterScreen({
   classId,
   initialDate,
+  isAdmin = false,
 }: {
   classId: string;
   initialDate?: string;
+  isAdmin?: boolean;
 }) {
-  const { registers, saveDraft, submit } = useAttendance();
+  const { registers, saveDraft, submit, error } = useAttendance();
   const { state } = useAcademics();
+  const { settings } = useSchoolSettings();
+  const { selectedTerm, scope } = useAcademicPeriod();
   const { confirm, toast } = useActionFeedback();
   const todayKey = today();
-  const [date, setDate] = useState(initialDate === todayKey ? initialDate : todayKey);
+  const [date, setDate] = useState(initialDate ?? todayKey);
   const schoolClass = state.classes.find((item) => item.id === classId);
   const teacherUserId = currentUserId();
-  const students = useMemo(
-    () =>
-      getStudentsByClass(state, classId).filter(
-        (item) => item.status === "ACTIVE",
-      ),
-    [state, classId],
-  );
-  const register = registers.find(
+  const [currentStudents, setStudents] = useState<AttendanceRosterStudent[]>([]);
+  const [rosterLoading, setRosterLoading] = useState(true);
+  const [rosterError, setRosterError] = useState("");
+  useEffect(() => {
+    let active = true;
+    setRosterLoading(true);
+    setRosterError("");
+    void attendanceRepository.getClassStudents(classId)
+      .then((items) => { if (active) setStudents(items.filter((item) => item.status === "ACTIVE")); })
+      .catch(() => { if (active) { setStudents([]); setRosterError("The class roster could not be loaded."); } })
+      .finally(() => { if (active) setRosterLoading(false); });
+    return () => { active = false; };
+  }, [classId]);
+  const attendancePeriod = {
+    academicSessionId: scope.academicSessionId,
+    termId: scope.termId,
+    startDate: selectedTerm?.startDate || settings.resumptionDate,
+    endDate: selectedTerm?.endDate || settings.closingDate,
+    requireStartDate: Boolean(selectedTerm),
+  };
+  const periodRegisters = filterAttendanceByPeriod(registers, attendancePeriod);
+  const register = periodRegisters.find(
     (item) => item.classId === classId && item.date === date,
   );
+  const students = attendanceRoster(currentStudents, register, state.students);
   const [entries, setEntries] = useState<WorkingEntry[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState<"draft" | "submit">();
 
   useEffect(() => {
     setEntries(
-      students.map((student) => {
+      attendanceRoster(currentStudents, register, state.students).map((student) => {
         const saved = register?.entries.find(
           (item) => item.studentId === student.id,
         );
@@ -251,29 +314,39 @@ export function AttendanceRegisterScreen({
       }),
     );
     setSelected([]);
-  }, [students, register]);
+  }, [currentStudents, register, state.students]);
 
-  if (
-    !schoolClass ||
-    !isClassTeacherForClass(state, teacherUserId, classId)
-  ) {
+  if (!schoolClass || (!isAdmin && !isClassTeacherForClass(state, teacherUserId, classId))) {
     return (
       <EmptyState
         title="Class unavailable"
-        description="Only the assigned class teacher can manage attendance for this class."
+        description={isAdmin ? "This class is unavailable." : "Only the assigned class teacher can manage attendance for this class."}
       />
     );
   }
 
-  const dateLocked = !isAttendanceDateEditable(date);
+  const dateLocked = isAdmin
+    ? !register && !(scope.isCurrentPeriod && date === todayKey) && !dateBelongsToPeriod(date, attendancePeriod)
+    : !isAttendanceDateEditable(date) && register?.status !== "REOPENED";
+  const periodLocked = isAdmin
+    ? !scope.isCurrentPeriod && !settings.historicalEditingEnabled && register?.status !== "REOPENED"
+    : !scope.isCurrentPeriod && register?.status !== "REOPENED";
   const readOnly =
+    periodLocked ||
     dateLocked ||
-    register?.status === "SUBMITTED" ||
-    register?.status === "REOPENED";
+    rosterLoading ||
+    Boolean(rosterError) ||
+    register?.status === "SUBMITTED";
   const warn = () =>
     toast(
       dateLocked
-        ? "Teachers can only mark attendance for today."
+        ? isAdmin ? "Choose a date within the selected academic term." : "Teachers can mark past attendance after an administrator reopens that register."
+        : rosterLoading
+          ? "The class roster is still loading."
+          : rosterError
+            ? rosterError
+          : periodLocked
+            ? "Past term attendance can only be changed in a reopened register."
         : "This attendance register has already been submitted.",
       "warning",
     );
@@ -319,6 +392,7 @@ export function AttendanceRegisterScreen({
         classId,
         date,
         entries: payload(),
+        isAdmin,
       };
       if (mode === "draft") {
         await saveDraft(input);
@@ -345,25 +419,33 @@ export function AttendanceRegisterScreen({
         title={`${schoolClass.displayName} Register`}
         description="Mark every student, review the live summary and submit once complete."
         action={
-          <label className="text-sm font-medium">
-            Date
-            <Input
-              className="mt-1"
-              type="date"
-              value={date}
-              min={todayKey}
-              max={todayKey}
-              onChange={(event) => setDate(event.target.value)}
-            />
-          </label>
+          isAdmin ? <span className="text-sm font-medium">{date}</span> : (
+            <label className="text-sm font-medium">
+              Date
+              <Input
+                className="mt-1"
+                type="date"
+                value={date}
+                max={todayKey}
+                onChange={(event) => setDate(event.target.value)}
+              />
+            </label>
+          )
         }
       />
+      {error && <p role="alert" className="mb-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</p>}
       <SummaryCards entries={entries} total={students.length} />
       {readOnly && (
         <div className="mt-5 flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm">
           <LockKeyhole size={17} />
-          {dateLocked
-            ? "Teachers can only mark attendance for today. Contact an administrator if another date needs correction."
+          {periodLocked
+            ? "Viewing a past term. Attendance cannot be changed."
+            : dateLocked
+            ? isAdmin ? "Choose a date within the selected academic term." : "Teachers can mark past attendance after an administrator reopens that register."
+            : rosterLoading
+            ? "Loading the class roster…"
+            : rosterError
+            ? rosterError
             : "This register is submitted and read-only. An administrator can reopen it."}
         </div>
       )}
@@ -460,7 +542,7 @@ export function AttendanceRegisterScreen({
                       />
                     </td>
                     <td className="px-4 py-3">
-                      <b>{name}</b>
+                      <b><PersonNameLink kind="student" id={student.id}>{name}</PersonNameLink></b>
                       <p className="text-xs text-muted">
                         {student.admissionNumber}
                       </p>
@@ -535,25 +617,43 @@ export function AdminAttendanceScreen() {
 }
 
 function PersonalAttendance({ studentId }: { studentId: string }) {
-  const { registers, isLoading } = useAttendance();
+  const { registers, sessionRegisters, isLoading, error } = useAttendance();
   const { state } = useAcademics();
-  const effectiveStudentId = studentId || firstStudentIdFromRegisters(registers);
+  const { settings } = useSchoolSettings();
+  const { selectedSession, selectedTerm, scope } = useAcademicPeriod();
+  const attendancePeriod = {
+    academicSessionId: scope.academicSessionId,
+    termId: scope.termId,
+    startDate: selectedTerm?.startDate || settings.resumptionDate,
+    endDate: selectedTerm?.endDate || settings.closingDate,
+    requireStartDate: Boolean(selectedTerm),
+  };
+  const periodRegisters = filterAttendanceByPeriod(registers, attendancePeriod);
+  const effectiveStudentId = studentId || firstStudentIdFromRegisters(periodRegisters);
   const student = state.students.find((item) => item.id === effectiveStudentId);
-  const summary = getAttendanceSummaryForStudent(registers, effectiveStudentId);
-  const history = attendanceHistoryForStudent(registers, effectiveStudentId);
+  const sessionPeriod = {
+    academicSessionId: selectedSession?.id,
+    startDate: selectedSession?.startDate || settings.resumptionDate,
+    endDate: selectedSession?.endDate || settings.closingDate,
+    requireStartDate: Boolean(selectedSession),
+  };
+  const summary = getAttendanceSummaryForStudent(sessionRegisters, effectiveStudentId, sessionPeriod);
+  const history = attendanceHistoryForStudent(sessionRegisters, effectiveStudentId, sessionPeriod);
   const current = history.find((item) => item.date === today());
 
   if (isLoading)
     return <p className="text-sm text-muted">Loading attendance...</p>;
   return (
     <>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      {error && <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</p>}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
         {[
           ["Today's status", current ? statusLabels[current.status] : "Not marked"],
-          ["Term attendance", `${summary.percentage}%`],
+          ["Session attendance", `${summary.percentage}%`],
           ["Present days", summary.present],
           ["Absent days", summary.absent],
           ["Late days", summary.late],
+          ["Unmarked days", summary.unmarked],
         ].map(([label, value]) => (
           <Card key={String(label)} className="p-4">
             <p className="text-sm text-muted">{label}</p>
@@ -563,7 +663,7 @@ function PersonalAttendance({ studentId }: { studentId: string }) {
       </div>
       <SectionCard
         title="Recent attendance history"
-        description={student ? studentName(student) : undefined}
+        description={student ? <PersonNameLink kind="student" id={student.id}>{studentName(student)}</PersonNameLink> : undefined}
       >
         <div className="divide-y px-5">
           {history.length ? (
@@ -604,12 +704,10 @@ function PersonalAttendance({ studentId }: { studentId: string }) {
 
 export function StudentAttendanceScreen() {
   const { state } = useAcademics();
+  const { registers } = useAttendance();
   const user = readStoredUser();
-  const studentId =
-    user?.studentId ??
-    state.students.find((student) => student.userId === user?.id)?.id ??
-    state.students[0]?.id ??
-    "";
+  const resolved = resolveStudentSession(state, user, readStoredToken() ? undefined : "student-yusuf");
+  const studentId = selectAttendanceStudentId(registers, resolved.studentId);
   return (
     <>
       <PageHeader
@@ -624,13 +722,23 @@ export function StudentAttendanceScreen() {
 export function ParentAttendanceScreen() {
   const { state } = useAcademics();
   const { registers } = useAttendance();
+  const { settings } = useSchoolSettings();
+  const { selectedTerm, scope } = useAcademicPeriod();
   const user = readStoredUser();
+  const attendancePeriod = {
+    academicSessionId: scope.academicSessionId,
+    termId: scope.termId,
+    startDate: selectedTerm?.startDate || settings.resumptionDate,
+    endDate: selectedTerm?.endDate || settings.closingDate,
+    requireStartDate: Boolean(selectedTerm),
+  };
+  const periodRegisters = filterAttendanceByPeriod(registers, attendancePeriod);
   const children = user?.guardianId
     ? getGuardianChildren(state, user.guardianId)
     : state.students.filter((student) => user?.childStudentIds?.includes(student.id));
   const attendanceStudentIds = [
     ...new Set(
-      registers.flatMap((register) =>
+      periodRegisters.flatMap((register) =>
         register.entries.map((entry) => entry.studentId),
       ),
     ),

@@ -15,12 +15,14 @@ import { Select } from "@/components/ui/select";
 import { useAcademics } from "@/features/academics/academics-context";
 import { getAccessibleClassesForTeacher, getClassById } from "@/features/academics/academics.selectors";
 import { resolveStudentSession } from "@/features/academics/student-session";
+import { useAcademicPeriod } from "@/features/academic-period/academic-period-context";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { assignmentRemovalPolicy } from "@/features/action-feedback/record-action.policy";
 import { readStoredToken } from "@/lib/api";
 import { readStoredUser } from "@/lib/auth";
 import { matchesSearch } from "@/lib/search";
 import { readAssignmentAsset } from "./assignment-asset.repository";
+import { filterAssignmentsByPeriod } from "./assignments-period-utils";
 import { useAssignments } from "./assignments-context";
 import type { AcademicsState, Student, Subject } from "@/features/academics/academics.types";
 import type { Assignment, AssignmentAsset, AssignmentInput, AssignmentSubmission } from "./assignments.types";
@@ -128,6 +130,7 @@ function assignmentMeta(academics: AcademicsState, item: Assignment) {
 export function TeacherAssignmentsScreen() {
   const { state, publish, close, remove } = useAssignments();
   const { state: academics } = useAcademics();
+  const { selectedSession, selectedTerm } = useAcademicPeriod();
   const { confirm, toast } = useActionFeedback();
   const teacherId = currentUserId();
   const [query, setQuery] = useState("");
@@ -135,7 +138,8 @@ export function TeacherAssignmentsScreen() {
   const [classId, setClassId] = useState("");
   const classes = getAccessibleClassesForTeacher(academics, teacherId);
   const classIds = new Set(classes.map((item) => item.id));
-  const assignments = state.assignments.filter((item) =>
+  const periodAssignments = filterAssignmentsByPeriod(state.assignments, { sessionId: selectedSession?.id, termId: selectedTerm?.id, startDate: selectedTerm?.startDate, endDate: selectedTerm?.endDate, requireStartDate: Boolean(selectedTerm) });
+  const assignments = periodAssignments.filter((item) =>
     item.teacherUserId === teacherId &&
     classIds.has(item.classId) &&
     (!status || item.status === status) &&
@@ -206,6 +210,7 @@ export function TeacherAssignmentsScreen() {
 export function TeacherAssignmentForm({ assignmentId }: { assignmentId?: string }) {
   const { state: academics } = useAcademics();
   const { state, save, publish } = useAssignments();
+  const { selectedSession, selectedTerm } = useAcademicPeriod();
   const { confirm, toast } = useActionFeedback();
   const teacherId = currentUserId();
   const existing = state.assignments.find((item) => item.id === assignmentId && item.teacherUserId === teacherId);
@@ -228,7 +233,7 @@ export function TeacherAssignmentForm({ assignmentId }: { assignmentId?: string 
   const perform = async (shouldPublish: boolean) => {
     setBusy(true);
     try {
-      const id = await save(form, assignmentId);
+      const id = await save({ ...form, sessionId: selectedSession?.id, termId: selectedTerm?.id }, assignmentId);
       if (shouldPublish) await publish(id);
       toast(shouldPublish ? "Assignment published successfully." : existing ? "Assignment updated successfully." : "Assignment created successfully.", "success");
     } catch (error) {
@@ -259,9 +264,10 @@ export function TeacherAssignmentForm({ assignmentId }: { assignmentId?: string 
 export function TeacherAssignmentDetail({ assignmentId }: { assignmentId: string }) {
   const { state, duplicate, close, remove, grade } = useAssignments();
   const { state: academics } = useAcademics();
+  const { selectedSession, selectedTerm } = useAcademicPeriod();
   const { confirm, toast } = useActionFeedback();
   const teacherId = currentUserId();
-  const item = state.assignments.find((entry) => entry.id === assignmentId && entry.teacherUserId === teacherId);
+  const item = filterAssignmentsByPeriod(state.assignments, { sessionId: selectedSession?.id, termId: selectedTerm?.id, startDate: selectedTerm?.startDate, endDate: selectedTerm?.endDate, requireStartDate: Boolean(selectedTerm) }).find((entry) => entry.id === assignmentId && entry.teacherUserId === teacherId);
   if (!item) return <EmptyState title="Assignment unavailable" description="It may not belong to your account." />;
   const rows = state.submissions.filter((entry) => entry.assignmentId === item.id);
   const submitted = rows.filter((entry) => entry.status !== "NOT_SUBMITTED").length;
@@ -322,11 +328,13 @@ function SubmissionRow({ assignment, submission, students, onGrade }: { assignme
 export function StudentAssignmentsScreen() {
   const { state } = useAssignments();
   const { state: academics } = useAcademics();
+  const { selectedSession, selectedTerm } = useAcademicPeriod();
   const studentId = currentStudentId(academics);
   const studentClassId = currentStudentClassId(academics);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
-  const visible = state.assignments.filter((item) =>
+  const periodAssignments = filterAssignmentsByPeriod(state.assignments, { sessionId: selectedSession?.id, termId: selectedTerm?.id, startDate: selectedTerm?.startDate, endDate: selectedTerm?.endDate, requireStartDate: Boolean(selectedTerm) });
+  const visible = periodAssignments.filter((item) =>
     (hasBackendSession() ? item.status !== "DRAFT" : publishedAssignmentForStudent(item, studentClassId)) &&
     (!status || effectiveSubmission(state, item, studentId).status === status) &&
     matchesSearch(query, item.title, item.instructions, subjectName(academics, item.subjectId)),
@@ -341,10 +349,11 @@ export function StudentAssignmentsScreen() {
 export function StudentAssignmentDetail({ assignmentId }: { assignmentId: string }) {
   const { state, submit } = useAssignments();
   const { state: academics } = useAcademics();
+  const { selectedSession, selectedTerm } = useAcademicPeriod();
   const { confirm, toast } = useActionFeedback();
   const studentId = currentStudentId(academics);
   const studentClassId = currentStudentClassId(academics);
-  const item = state.assignments.find((entry) =>
+  const item = filterAssignmentsByPeriod(state.assignments, { sessionId: selectedSession?.id, termId: selectedTerm?.id, startDate: selectedTerm?.startDate, endDate: selectedTerm?.endDate, requireStartDate: Boolean(selectedTerm) }).find((entry) =>
     entry.id === assignmentId &&
     (hasBackendSession() ? entry.status !== "DRAFT" : publishedAssignmentForStudent(entry, studentClassId)),
   );
@@ -377,11 +386,12 @@ export function StudentAssignmentDetail({ assignmentId }: { assignmentId: string
 export function ParentAssignmentsScreen() {
   const { state } = useAssignments();
   const { state: academics } = useAcademics();
+  const { selectedSession, selectedTerm } = useAcademicPeriod();
   const children = currentParentChildren(academics);
   const [selected, setSelected] = useState(children[0]?.id ?? "");
   const child = children.find((item) => item.id === selected) ?? children[0];
   const rows = child
-    ? state.assignments
+    ? filterAssignmentsByPeriod(state.assignments, { sessionId: selectedSession?.id, termId: selectedTerm?.id, startDate: selectedTerm?.startDate, endDate: selectedTerm?.endDate, requireStartDate: Boolean(selectedTerm) })
       .filter((assignment) => publishedAssignmentForStudent(assignment, child.classId))
       .map((assignment) => ({ assignment, submission: effectiveSubmission(state, assignment, child.id) }))
     : [];

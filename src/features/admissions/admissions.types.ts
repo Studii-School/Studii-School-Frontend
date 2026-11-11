@@ -5,6 +5,9 @@ export interface AdmissionDocument { id: string; name: string; type: string; dat
 export interface AdmissionDecision { id: string; status: AdmissionStatus; note?: string; changedAt: string; changedBy: string }
 export interface AdmissionApplication {
   id: string;
+  academicSessionId?: string;
+  sessionId?: string;
+  termId?: string;
   applicationNumber: string;
   firstName: string;
   middleName?: string;

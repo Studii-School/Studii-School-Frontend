@@ -1,4 +1,7 @@
 import { academicsRepository } from "@/features/academics/academics.repository";
+import type { AcademicPeriodScope } from "@/features/academic-period/academic-period-context";
+import { isUuid } from "@/features/academic-period/academic-period.repository";
+import { dateBelongsToPeriod } from "@/features/academic-period/period-scope-utils";
 import type {
   SchoolClass,
   Student,
@@ -11,6 +14,7 @@ import {
   saveStoredAttendance,
 } from "./attendance.storage";
 import { summarizeRegister } from "./attendance.utils";
+import { backendAttendancePeriod } from "./attendance-backend-period";
 import type {
   AdminAttendanceEntryInput,
   AttendanceAuditEntry,
@@ -19,7 +23,7 @@ import type {
 } from "./attendance.types";
 
 export interface AttendanceRepository {
-  getAll(): Promise<AttendanceRegister[]>;
+  getAll(context?: AcademicPeriodScope): Promise<AttendanceRegister[]>;
   getAssignedClassesForTeacher(teacherUserId: string): Promise<SchoolClass[]>;
   getClassStudents(classId: string): Promise<Student[]>;
   getAttendanceRegister(
@@ -76,8 +80,25 @@ function hydrate(register: AttendanceRegister): AttendanceRegister {
 }
 
 export class LocalAttendanceRepository implements AttendanceRepository {
-  async getAll() {
-    return (await getStoredAttendance()).map(hydrate);
+  async getAll(context?: AcademicPeriodScope) {
+    const items = (await getStoredAttendance()).map(hydrate);
+    if (!context?.isReady) return items;
+    let changed = false;
+    const canMigrateLegacy = context.isCurrentPeriod && /^\d{4}-\d{2}-\d{2}$/.test(context.startDate ?? "");
+    for (const item of items) {
+      if (item.schoolId === "school-001" && context.schoolId !== "school-001") {
+        item.schoolId = context.schoolId;
+        changed = true;
+      }
+      if (!canMigrateLegacy) continue;
+      if (item.academicSessionId || item.sessionId || item.termId) continue;
+      if (context.startDate && item.date < context.startDate) continue;
+      if (context.endDate && item.date > context.endDate) continue;
+      Object.assign(item, { academicSessionId: context.academicSessionId, sessionId: context.academicSessionId, termId: context.termId });
+      changed = true;
+    }
+    if (changed) await saveStoredAttendance(items);
+    return items.filter((item) => item.schoolId === context.schoolId && (item.academicSessionId ?? item.sessionId) === context.academicSessionId);
   }
 
   async getAssignedClassesForTeacher(teacherUserId: string) {
@@ -118,31 +139,31 @@ export class LocalAttendanceRepository implements AttendanceRepository {
     const assigned = await this.getAssignedClassesForTeacher(
       input.teacherUserId,
     );
-    if (!assigned.some((item) => item.id === input.classId)) {
+    if (!input.isAdmin && !assigned.some((item) => item.id === input.classId)) {
       throw new Error("You are not assigned to this class.");
     }
     if (!input.date) throw new Error("Select an attendance date.");
-    if (!isAttendanceDateEditable(input.date)) {
-      throw new Error("Teachers can only mark attendance for today.");
-    }
-
     const items = await this.getAll();
     const existing = items.find(
-      (item) => item.classId === input.classId && item.date === input.date,
+      (item) => item.classId === input.classId && item.date === input.date &&
+        (item.academicSessionId ?? item.sessionId) === (input.academicSessionId ?? input.sessionId) &&
+        item.termId === input.termId,
     );
-    if (
-      existing?.status === "SUBMITTED" ||
-      existing?.status === "REOPENED"
-    ) {
+    if (!input.isAdmin && !isAttendanceDateEditable(input.date) && existing?.status !== "REOPENED") {
+      throw new Error("Teachers can mark past attendance after an administrator reopens that register.");
+    }
+    if (existing?.status === "SUBMITTED") {
       throw new Error("This attendance register is read-only for teachers.");
     }
 
     if (status === "SUBMITTED") {
-      const students = await this.getClassStudents(input.classId);
+      const requiredStudentIds = existing?.status === "REOPENED"
+        ? existing.entries.map((entry) => entry.studentId)
+        : (await this.getClassStudents(input.classId)).map((student) => student.id);
       if (
-        students.some(
-          (student) =>
-            !input.entries.some((entry) => entry.studentId === student.id),
+        requiredStudentIds.some(
+          (studentId) =>
+            !input.entries.some((entry) => entry.studentId === studentId),
         )
       ) {
         throw new Error("Mark every student before submitting attendance.");
@@ -153,10 +174,13 @@ export class LocalAttendanceRepository implements AttendanceRepository {
     const id = existing?.id ?? `register-${input.classId}-${input.date}`;
     const register: AttendanceRegister = {
       id,
-      schoolId: "school-001",
+      schoolId: input.schoolId ?? existing?.schoolId ?? "school-001",
       classId: input.classId,
+      academicSessionId: input.academicSessionId ?? input.sessionId ?? existing?.academicSessionId,
+      sessionId: input.sessionId ?? existing?.sessionId,
+      termId: input.termId ?? existing?.termId,
       date: input.date,
-      status,
+      status: existing?.status === "REOPENED" && status === "DRAFT" ? "REOPENED" : status,
       teacherUserId: input.teacherUserId,
       submittedAt: status === "SUBMITTED" ? now : existing?.submittedAt,
       submittedByUserId:
@@ -178,7 +202,7 @@ export class LocalAttendanceRepository implements AttendanceRepository {
               : "DRAFT_SAVED"
             : "CREATED",
           input.teacherUserId,
-          "TEACHER",
+          input.isAdmin ? "ADMIN" : "TEACHER",
         ),
       ],
       entries: input.entries.map((entry) => {
@@ -359,6 +383,9 @@ type BackendAttendanceEntry = Partial<AttendanceRegister["entries"][number]> & {
   student?: Partial<Student>;
   classId?: string;
   date?: string;
+  sessionId?: string;
+  termId?: string;
+  markedById?: string;
   register?: BackendAttendanceRegister;
 };
 type BackendAttendanceRegister = Partial<AttendanceRegister> & {
@@ -376,8 +403,11 @@ type BackendAttendanceRegisterResponse = BackendAttendanceRegister | {
 };
 type BackendAttendanceHistory = {
   student?: Partial<Student>;
+  studentId?: string;
   summary?: unknown;
   records?: BackendAttendanceEntry[];
+  sessionId?: string;
+  termId?: string;
 };
 type BackendAttendanceSummary = Partial<ReturnType<typeof summarizeRegister>>;
 
@@ -408,11 +438,12 @@ function mapAttendanceEntry(item: BackendAttendanceEntry, registerId: string): A
     id: item.id ?? `entry-${registerId}-${item.studentId}`,
     schoolId: item.schoolId ?? "school-001",
     registerId: item.registerId ?? registerId,
-    studentId: item.studentId ?? "",
+    studentId: item.studentId ?? item.student?.id ?? "",
+    student: item.student,
     status: item.status ?? "ABSENT",
     note: item.note,
     arrivalTime: item.arrivalTime,
-    markedByUserId: item.markedByUserId ?? "",
+    markedByUserId: item.markedByUserId ?? item.markedById ?? "",
     createdAt: item.createdAt ?? now,
     updatedAt: item.updatedAt ?? now,
   };
@@ -432,6 +463,7 @@ function mapAttendanceRegister(item: BackendAttendanceRegister): AttendanceRegis
     id,
     schoolId: item.schoolId ?? "school-001",
     classId: item.classId ?? "",
+    ...backendAttendancePeriod(item, item.entries),
     date: backendDateKey(item.date ?? now),
     status: item.status ?? "DRAFT",
     teacherUserId: item.teacherUserId ?? "",
@@ -459,6 +491,7 @@ function registersFromRecords(records: BackendAttendanceEntry[]): AttendanceRegi
       id,
       schoolId: register?.schoolId ?? first.schoolId ?? "school-001",
       classId: register?.classId ?? first.classId ?? "",
+      ...backendAttendancePeriod(register ?? {}, entries),
       date: backendDateKey(register?.date ?? first.date),
       status: register?.status ?? "SUBMITTED",
       teacherUserId: register?.teacherUserId ?? first.markedByUserId ?? "",
@@ -476,12 +509,36 @@ function registersFromRecords(records: BackendAttendanceEntry[]): AttendanceRegi
 function mapAttendanceHistory(value: unknown): AttendanceRegister[] {
   if (isRegisterListResponse(value)) return unwrapList(value).map(mapAttendanceRegister);
   if (typeof value !== "object" || value === null) return [];
-  const response = value as BackendAttendanceHistory & { children?: BackendAttendanceHistory[] };
-  if (Array.isArray(response.records)) return registersFromRecords(response.records);
+  const wrapped = value as { data?: unknown };
+  const response = (wrapped.data && typeof wrapped.data === "object" ? wrapped.data : value) as BackendAttendanceHistory & { children?: BackendAttendanceHistory[] };
+  const recordsForStudent = (history: BackendAttendanceHistory) =>
+    (history.records ?? []).map((record) => ({
+      ...record,
+      studentId: record.studentId ?? record.student?.id ?? history.studentId ?? history.student?.id,
+      sessionId: record.sessionId ?? history.sessionId,
+      termId: record.termId ?? history.termId,
+    }));
+  if (Array.isArray(response.records)) return registersFromRecords(recordsForStudent(response));
   if (Array.isArray(response.children)) {
-    return response.children.flatMap((child) => registersFromRecords(child.records ?? []));
+    return response.children.flatMap((child) => registersFromRecords(recordsForStudent(child)));
   }
   return [];
+}
+
+function scopeBackendRegisters(registers: AttendanceRegister[], context?: AcademicPeriodScope) {
+  if (!context?.isReady) return registers;
+  return registers.map((register) => {
+    const sessionId = register.academicSessionId ?? register.sessionId;
+    if (sessionId && sessionId !== context.academicSessionId) return register;
+    if (register.termId && register.termId !== context.termId) return register;
+    if (!dateBelongsToPeriod(register.date, context)) return register;
+    return {
+      ...register,
+      academicSessionId: context.academicSessionId,
+      sessionId: context.academicSessionId,
+      termId: context.termId,
+    };
+  });
 }
 
 function mapBackendClass(item: Partial<SchoolClass>): SchoolClass {
@@ -555,6 +612,8 @@ function registerBody(input: SaveAttendanceInput) {
   return {
     teacherUserId: input.teacherUserId || undefined,
     classId: input.classId,
+    sessionId: input.sessionId ?? input.academicSessionId,
+    termId: input.termId,
     date: input.date,
     entries: input.entries.map((entry) => ({
       studentId: entry.studentId,
@@ -579,13 +638,17 @@ class BackendAttendanceRepository extends LocalAttendanceRepository {
     return Boolean(readStoredToken());
   }
 
-  async getAll() {
-    if (!this.hasSession()) return super.getAll();
+  async getAll(context?: AcademicPeriodScope) {
+    if (!this.hasSession()) return super.getAll(context);
+    if (context?.isReady && !context.hasBackendIds) {
+      throw new Error("The selected academic term is not synchronized with the server.");
+    }
+    const suffix = context?.isReady ? `?sessionId=${encodeURIComponent(context.academicSessionId)}` : "";
     const role = storedBackendRole();
-    if (role === "STUDENT") return this.getAttendanceForStudent("");
-    if (role === "PARENT") return this.getAttendanceForParent("");
+    if (role === "STUDENT") return scopeBackendRegisters(mapAttendanceHistory(await apiRequest<unknown>(`/attendance/me${suffix}`)), context);
+    if (role === "PARENT") return scopeBackendRegisters(mapAttendanceHistory(await apiRequest<unknown>(`/attendance/children${suffix}`)), context);
     const data = await apiRequest<BackendAttendanceRegister[] | { data?: BackendAttendanceRegister[]; items?: BackendAttendanceRegister[]; results?: BackendAttendanceRegister[]; registers?: BackendAttendanceRegister[] }>("/attendance/registers");
-    return unwrapList(data).map(mapAttendanceRegister);
+    return scopeBackendRegisters(unwrapList(data).map(mapAttendanceRegister), context);
   }
 
   async getAssignedClassesForTeacher(teacherUserId: string) {
@@ -613,6 +676,9 @@ class BackendAttendanceRepository extends LocalAttendanceRepository {
 
   async saveAttendanceDraft(input: SaveAttendanceInput) {
     if (!this.hasSession()) return super.saveAttendanceDraft(input);
+    if (!isUuid(input.termId) || !isUuid(input.sessionId ?? input.academicSessionId)) {
+      throw new Error("The selected academic term is not synchronized with the server. Attendance was not saved.");
+    }
     return mapAttendanceRegister(unwrapRegister(await apiRequest<BackendAttendanceRegisterResponse>("/attendance/registers/draft", {
       method: "POST",
       body: JSON.stringify(registerBody(input)),
@@ -621,6 +687,9 @@ class BackendAttendanceRepository extends LocalAttendanceRepository {
 
   async submitAttendance(input: SaveAttendanceInput) {
     if (!this.hasSession()) return super.submitAttendance(input);
+    if (!isUuid(input.termId) || !isUuid(input.sessionId ?? input.academicSessionId)) {
+      throw new Error("The selected academic term is not synchronized with the server. Attendance was not submitted.");
+    }
     return mapAttendanceRegister(unwrapRegister(await apiRequest<BackendAttendanceRegisterResponse>("/attendance/registers/submit", {
       method: "POST",
       body: JSON.stringify(registerBody(input)),

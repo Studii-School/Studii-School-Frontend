@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  experimental: {
+    // The persistent dev cache exhausted disk space and caused Turbopack panics.
+    turbopackFileSystemCacheForDev: false,
+  },
 };
 
 export default nextConfig;

@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Trash2, Upload } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { ArrowLeft, ArrowRight, Check, FileCheck2, HeartPulse, School, Trash2, Upload, UserRound, UsersRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { ProfileImageField } from "@/components/shared/profile-image-field";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { MultiSelect, Select } from "@/components/ui/select";
+import { ButtonTabs } from "@/components/ui/tabs";
 import { useAcademics } from "@/features/academics/academics-context";
 import type {
   Guardian,
@@ -18,12 +21,12 @@ import { useActionFeedback } from "@/features/action-feedback/action-feedback-co
 import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
 
 const steps = [
-  "Personal Details",
-  "School Details",
-  "Parent Details",
-  "Contact and Emergency",
-  "Documents",
-  "Review and Save",
+  "Student",
+  "Class",
+  "Parent",
+  "Health",
+  "Files",
+  "Review",
 ];
 
 type FormState = StudentInput & {
@@ -31,7 +34,9 @@ type FormState = StudentInput & {
   existingGuardianId: string;
   selectedGuardianIds: string[];
   guardianRelationship: string;
+  guardianDateOfBirth: string;
   guardianAddress: string;
+  guardianPhotoUrl: string;
   guardianPrimary: boolean;
   guardianEmergency: boolean;
 };
@@ -64,19 +69,28 @@ const blankForm = (level: SchoolLevel): FormState => ({
   existingGuardianId: "",
   selectedGuardianIds: [],
   guardianRelationship: "Parent",
+  guardianDateOfBirth: "",
   guardianAddress: "",
+  guardianPhotoUrl: "",
   guardianPrimary: true,
   guardianEmergency: true,
 });
 
 export function StudentFormPage({
   studentId,
+  variant = "page",
+  onCancel,
+  onSaved,
 }: {
   studentId?: string;
+  variant?: "page" | "modal";
+  onCancel?: () => void;
+  onSaved?: (studentId: string) => void;
 }) {
   const {
     state,
     createGuardian,
+    updateGuardian,
     createStudent,
     updateStudent,
     moveStudentToClass,
@@ -104,7 +118,9 @@ export function StudentFormPage({
           existingGuardianId: existingGuardian?.id ?? "",
           selectedGuardianIds: existing.guardianIds,
           guardianRelationship: existingGuardian?.relationship ?? "Parent",
+          guardianDateOfBirth: existingGuardian?.dateOfBirth?.slice(0, 10) ?? "",
           guardianAddress: existingGuardian?.address ?? "",
+          guardianPhotoUrl: existingGuardian?.photoUrl ?? "",
           guardianPrimary: existingGuardian?.isPrimaryContact ?? true,
           guardianEmergency: existingGuardian?.isEmergencyContact ?? true,
         }
@@ -127,6 +143,12 @@ export function StudentFormPage({
   const studentName =
     [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ") ||
     "Not provided";
+  const completion = [
+    Boolean(form.firstName.trim() && form.lastName.trim()),
+    Boolean(form.classId),
+    form.guardianMode === "existing" ? Boolean(form.selectedGuardianIds.length) : Boolean(form.guardianName.trim() && form.guardianPhone.trim()),
+    Boolean(form.emergencyContactName?.trim() || form.medicalNotes?.trim() || documents.length),
+  ].filter(Boolean).length;
   const newGuardianDetails = [
     ["Full name", form.guardianName],
     ["Relationship", form.guardianRelationship],
@@ -230,6 +252,9 @@ export function StudentFormPage({
       let guardianIds = linkedGuardians.map((item) => item.id);
       if (form.guardianMode === "existing") {
         guardian = linkedGuardians[0];
+        if (guardian && (form.guardianPhotoUrl !== (guardian.photoUrl ?? "") || form.guardianDateOfBirth !== (guardian.dateOfBirth?.slice(0, 10) ?? ""))) {
+          guardian = await updateGuardian(guardian.id, { photoUrl: form.guardianPhotoUrl || undefined, dateOfBirth: form.guardianDateOfBirth || undefined });
+        }
       } else {
         guardian = await createGuardian({
           fullName: form.guardianName.trim(),
@@ -237,6 +262,8 @@ export function StudentFormPage({
           phone: form.guardianPhone.trim(),
           email: form.guardianEmail?.trim() || undefined,
           address: form.guardianAddress.trim() || undefined,
+          dateOfBirth: form.guardianDateOfBirth || undefined,
+          photoUrl: form.guardianPhotoUrl || undefined,
           isPrimaryContact: form.guardianPrimary,
           isEmergencyContact: form.guardianEmergency,
         });
@@ -310,7 +337,11 @@ export function StudentFormPage({
         }
         toast("Student added successfully.", "success");
       }
-      router.push(`/admin/students/${savedId}`);
+      if (onSaved) {
+        onSaved(savedId);
+      } else {
+        router.push(`/admin/students/${savedId}`);
+      }
     } catch (error) {
       toast(
         error instanceof Error ? error.message : "Student could not be saved.",
@@ -322,35 +353,36 @@ export function StudentFormPage({
   };
 
   return (
-    <div className="w-full min-w-0 max-w-4xl">
-      <PageHeader
-        title={existing ? "Edit Student" : "Add Student"}
-        description="Complete the student record one step at a time."
+    <div className={variant === "modal" ? "w-full min-w-0" : "w-full min-w-0 max-w-4xl"}>
+      {variant === "page" && (
+        <PageHeader
+          title={existing ? "Edit Student" : "Add Enrolled Student"}
+          description="Capture the essentials first, then enrich the student profile without making manual entry feel heavy."
+        />
+      )}
+      <Card className={variant === "modal" ? "mb-4 overflow-hidden" : "mb-5 overflow-hidden"}>
+        <div className="grid gap-0 md:grid-cols-[1fr_220px]">
+          <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+            <ProgressTile icon={<UserRound size={18} />} label="Name" done={Boolean(form.firstName.trim() && form.lastName.trim())} />
+            <ProgressTile icon={<School size={18} />} label="Class" done={Boolean(form.classId)} />
+            <ProgressTile icon={<UsersRound size={18} />} label="Parent" done={form.guardianMode === "existing" ? Boolean(form.selectedGuardianIds.length) : Boolean(form.guardianName.trim() && form.guardianPhone.trim())} />
+            <ProgressTile icon={<HeartPulse size={18} />} label="Care notes" done={Boolean(form.emergencyContactName?.trim() || form.medicalNotes?.trim() || documents.length)} optional />
+          </div>
+          <div className="border-t bg-surface-muted p-4 md:border-l md:border-t-0">
+            <p className="text-xs font-semibold uppercase text-muted">Record readiness</p>
+            <p className="mt-2 text-3xl font-bold">{completion}/4</p>
+            <p className="mt-1 text-sm text-muted">{selectedClass?.displayName ?? "Class not selected"}</p>
+          </div>
+        </div>
+      </Card>
+      <ButtonTabs
+        label="Student edit sections"
+        items={steps}
+        value={steps[step]}
+        onChange={(value) => setStep(steps.indexOf(value))}
       />
-      <div className="mb-5 max-w-full overflow-x-auto">
-        <ol className="flex min-w-max gap-2">
-          {steps.map((label, index) => (
-            <li key={label}>
-              <button
-                type="button"
-                aria-current={index === step ? "step" : undefined}
-                onClick={() => setStep(index)}
-                className={`rounded-full px-3 py-2 text-sm font-medium transition hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20 ${
-                  index === step
-                    ? "bg-[var(--school-primary)] text-[var(--school-primary-foreground)]"
-                    : index < step
-                      ? "bg-primary-light text-[var(--school-primary)] hover:bg-primary-light/80"
-                      : "bg-surface-muted text-muted hover:text-foreground"
-                }`}
-              >
-                {index + 1}. {label}
-              </button>
-            </li>
-          ))}
-        </ol>
-      </div>
 
-      <section className="rounded-xl border bg-surface p-4 sm:p-5">
+      <section className="mt-4 rounded-xl border bg-surface p-4 sm:p-5">
         {step === 0 && (
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="First name">
@@ -381,18 +413,17 @@ export function StudentFormPage({
               <Input value={form.address ?? ""} onChange={(event) => patch("address", event.target.value)} />
             </Field>
             <Field label="Student photo" wide>
+              <Input className="mb-3" type="url" value={form.photoUrl?.startsWith("data:") ? "" : form.photoUrl ?? ""} onChange={(event) => patch("photoUrl", event.target.value)} placeholder="https://example.com/student.jpg" />
               <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-surface-muted p-3">
-                {form.photoUrl ? (
-                  <img
-                    src={form.photoUrl}
-                    alt={`${studentName} preview`}
-                    className="size-20 rounded-lg border bg-surface object-cover"
-                  />
-                ) : (
-                  <div className="flex size-20 items-center justify-center rounded-lg border border-dashed bg-surface text-center text-xs text-muted">
-                    No photo
-                  </div>
-                )}
+                <img
+                  src={form.photoUrl || "/default-profile.svg"}
+                  alt={form.photoUrl ? `${studentName} preview` : "Default student photo"}
+                  onError={(event) => {
+                    event.currentTarget.onerror = null;
+                    event.currentTarget.src = "/default-profile.svg";
+                  }}
+                  className="size-20 rounded-lg border bg-surface object-cover"
+                />
                 <div className="flex flex-wrap gap-2">
                   <label className="inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-[10px] border bg-surface px-3 text-sm font-semibold">
                     <Upload size={16} /> Upload image
@@ -442,24 +473,32 @@ export function StudentFormPage({
 
         {step === 2 && (
           <div className="space-y-4">
-            <div className="flex gap-2">
+            <div className="grid gap-3 sm:grid-cols-2">
               {(["existing", "new"] as const).map((value) => (
-                <Button key={value} type="button" variant={form.guardianMode === value ? "primary" : "outline"} onClick={() => patch("guardianMode", value)}>
-                  {value === "existing" ? "Link Existing Parent" : "Create New Parent"}
-                </Button>
+                <button key={value} type="button" onClick={() => patch("guardianMode", value)} className={`rounded-[8px] border p-4 text-left transition ${form.guardianMode === value ? "border-[var(--school-primary)] bg-primary-light text-[var(--school-primary)]" : "bg-surface hover:bg-surface-muted"}`}>
+                  <UsersRound size={18} />
+                  <p className="mt-3 font-semibold">{value === "existing" ? "Link existing parent" : "Create parent profile"}</p>
+                  <p className="mt-1 text-xs text-muted">{value === "existing" ? "Use a parent already known by the school." : "Create login-ready parent contact details now."}</p>
+                </button>
               ))}
             </div>
             {form.guardianMode === "existing" ? (
-              <Field label="Find guardian">
-                <MultiSelect searchable label="Existing parents" values={form.selectedGuardianIds} onChange={(values) => patch("selectedGuardianIds", values.slice(0, 2))} placeholder="Search by name, phone or email" options={state.guardians.map((item) => ({ value: item.id, label: item.fullName, description: [item.phone, item.email].filter(Boolean).join(" · ") }))} />
-              </Field>
+              <div className="space-y-4">
+                <Field label="Find guardian">
+                  <MultiSelect searchable label="Existing parents" values={form.selectedGuardianIds} onChange={(values) => { const limited = values.slice(0, 2); patch("selectedGuardianIds", limited); const primary = state.guardians.find((item) => item.id === limited[0]); patch("guardianPhotoUrl", primary?.photoUrl ?? ""); patch("guardianDateOfBirth", primary?.dateOfBirth?.slice(0, 10) ?? ""); }} placeholder="Search by name, phone or email" options={state.guardians.map((item) => ({ value: item.id, label: item.fullName, description: [item.phone, item.email].filter(Boolean).join(" · ") }))} />
+                </Field>
+                <Field label="Primary parent date of birth"><Input type="date" value={form.guardianDateOfBirth} onChange={(event) => patch("guardianDateOfBirth", event.target.value)} /></Field>
+                {selectedGuardians[0] && <ProfileImageField label={`${selectedGuardians[0].fullName}'s profile image`} name={selectedGuardians[0].fullName} value={form.guardianPhotoUrl} onChange={(value) => patch("guardianPhotoUrl", value)} />}
+              </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Full name"><Input value={form.guardianName} onChange={(event) => patch("guardianName", event.target.value)} /></Field>
                 <Field label="Relationship"><Input value={form.guardianRelationship} onChange={(event) => patch("guardianRelationship", event.target.value)} /></Field>
                 <Field label="Phone"><Input type="tel" value={form.guardianPhone} onChange={(event) => patch("guardianPhone", event.target.value)} /></Field>
                 <Field label="Parent login email"><Input type="email" value={form.guardianEmail ?? ""} onChange={(event) => patch("guardianEmail", event.target.value)} /></Field>
+                <Field label="Parent date of birth"><Input type="date" value={form.guardianDateOfBirth} onChange={(event) => patch("guardianDateOfBirth", event.target.value)} /></Field>
                 <Field label="Address" wide><Input value={form.guardianAddress} onChange={(event) => patch("guardianAddress", event.target.value)} /></Field>
+                <div className="sm:col-span-2"><ProfileImageField label="Parent profile image" name={form.guardianName || "Parent"} value={form.guardianPhotoUrl} onChange={(value) => patch("guardianPhotoUrl", value)} /></div>
               </div>
             )}
           </div>
@@ -490,17 +529,15 @@ export function StudentFormPage({
           <div className="space-y-5">
             <div className="grid gap-4 lg:grid-cols-[180px_1fr]">
               <div className="flex min-h-44 items-center justify-center rounded-xl border bg-surface-muted p-3">
-                {form.photoUrl ? (
-                  <img
-                    src={form.photoUrl}
-                    alt={`${studentName} preview`}
-                    className="size-36 rounded-lg border bg-surface object-cover"
-                  />
-                ) : (
-                  <div className="flex size-36 items-center justify-center rounded-lg border border-dashed bg-surface text-center text-sm text-muted">
-                    No photo uploaded
-                  </div>
-                )}
+                <img
+                  src={form.photoUrl || "/default-profile.svg"}
+                  alt={form.photoUrl ? `${studentName} preview` : "Default student photo"}
+                  onError={(event) => {
+                    event.currentTarget.onerror = null;
+                    event.currentTarget.src = "/default-profile.svg";
+                  }}
+                  className="size-36 rounded-lg border bg-surface object-cover"
+                />
               </div>
               <ReviewSection
                 title="Personal Details"
@@ -601,16 +638,45 @@ export function StudentFormPage({
         )}
 
         <div className="mt-6 flex flex-wrap justify-between gap-3 border-t pt-4">
-          <Button type="button" variant="outline" disabled={step === 0} onClick={() => setStep((current) => current - 1)}>
-            <ArrowLeft size={15} /> Back
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {onCancel && (
+              <Button type="button" variant="outline" onClick={onCancel}>
+                Cancel
+              </Button>
+            )}
+            <Button type="button" variant="outline" disabled={step === 0} onClick={() => setStep((current) => current - 1)}>
+              <ArrowLeft size={15} /> Back
+            </Button>
+          </div>
           {step < 5 ? (
-            <Button type="button" onClick={next}>Continue <ArrowRight size={15} /></Button>
+            <Button type="button" onClick={next}>{step === 0 ? "Choose class" : step === 1 ? "Add parent" : step === 2 ? "Health details" : step === 3 ? "Attach files" : "Review record"} <ArrowRight size={15} /></Button>
           ) : (
-            <Button type="button" disabled={saving} onClick={() => void save()}><Check size={15} />{saving ? "Saving student..." : existing ? "Save Changes" : "Add Student"}</Button>
+            <Button type="button" disabled={saving} onClick={() => void save()}><FileCheck2 size={15} />{saving ? "Saving student..." : existing ? "Save Changes" : "Create Student Record"}</Button>
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function ProgressTile({
+  icon,
+  label,
+  done,
+  optional,
+}: {
+  icon: ReactNode;
+  label: string;
+  done: boolean;
+  optional?: boolean;
+}) {
+  return (
+    <div className={`rounded-[8px] border p-3 ${done ? "border-[var(--school-primary)] bg-primary-light" : "bg-surface"}`}>
+      <div className="flex items-center justify-between gap-3">
+        <span className={done ? "text-[var(--school-primary)]" : "text-muted"}>{icon}</span>
+        {done ? <Check size={15} className="text-[var(--school-primary)]" /> : <span className="text-xs text-muted">{optional ? "Optional" : "Required"}</span>}
+      </div>
+      <p className="mt-3 text-sm font-semibold">{label}</p>
     </div>
   );
 }

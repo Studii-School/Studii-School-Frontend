@@ -1,14 +1,15 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ClipboardList, ExternalLink, Plus, Save, Settings2, Trash2, UserCheck, Users } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ArrowLeft, CalendarCheck, ClipboardList, ExternalLink, Plus, Save, Settings2, Trash2, UserCheck } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { SearchInput } from "@/components/shared/search-input";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonStyles } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ClickableTableRow } from "@/components/ui/clickable-table-row";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useAcademics } from "@/features/academics/academics-context";
@@ -17,11 +18,11 @@ import Link from "@/features/navigation-progress/navigation-progress-link";
 import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
 import { useAdmissions } from "./admissions-context";
 import type { SchoolClass } from "@/features/academics/academics.types";
-import type { AdmissionApplication, AdmissionFormField, AdmissionFormFieldKey, AdmissionFormFieldType, AdmissionInput, AdmissionStatus } from "./admissions.types";
+import type { AdmissionApplication, AdmissionFormField, AdmissionFormFieldType, AdmissionInput, AdmissionStatus } from "./admissions.types";
 
-const statuses: AdmissionStatus[] = ["NEW", "ACCEPTED", "REJECTED", "ENROLLED"];
+const statuses: AdmissionStatus[] = ["NEW", "UNDER_REVIEW", "INTERVIEW", "ACCEPTED", "REJECTED", "ENROLLED"];
 const statusLabel = (status: AdmissionStatus) => status.replaceAll("_", " ");
-const statusTone = (status: AdmissionStatus) => status === "ENROLLED" || status === "ACCEPTED" ? "success" as const : status === "REJECTED" ? "danger" as const : "neutral" as const;
+const statusTone = (status: AdmissionStatus) => status === "ENROLLED" || status === "ACCEPTED" ? "success" as const : status === "REJECTED" ? "danger" as const : status === "INTERVIEW" ? "warning" as const : "neutral" as const;
 const fullName = (item: Pick<AdmissionApplication, "firstName" | "middleName" | "lastName">) => [item.firstName, item.middleName, item.lastName].filter(Boolean).join(" ");
 const formatDate = (value: string) => new Date(value).toLocaleDateString([], { dateStyle: "medium" });
 const publicFormPath = "/admissions/apply";
@@ -50,21 +51,22 @@ export function AdmissionsDashboard() {
     return (!selectedStatus || selectedStatus === "ALL" || item.status === selectedStatus) && (!query || `${fullName(item)} ${item.parentName} ${item.parentPhone} ${className} ${item.applicationNumber}`.toLowerCase().includes(query.toLowerCase()));
   }), [applications, query, selectedStatus, state.classes]);
   const cards: Array<{ label: string; status: AdmissionStatus | "ALL"; count: number; description: string }> = [
-    { label: "All applications", status: "ALL", count: applications.length, description: "Every submitted admission record" },
-    { label: "New", status: "NEW", count: applications.filter((item) => item.status === "NEW").length, description: "Needs review" },
-    { label: "Accepted", status: "ACCEPTED", count: applications.filter((item) => item.status === "ACCEPTED").length, description: "Ready for enrollment" },
-    { label: "Enrolled", status: "ENROLLED", count: applications.filter((item) => item.status === "ENROLLED").length, description: "Converted to students" },
-    { label: "Rejected", status: "REJECTED", count: applications.filter((item) => item.status === "REJECTED").length, description: "Not proceeding" },
+    { label: "All applications", status: "ALL", count: applications.length, description: "Complete admissions register" },
+    { label: "New", status: "NEW", count: applications.filter((item) => item.status === "NEW").length, description: "Fresh submissions to screen" },
+    { label: "Under review", status: "UNDER_REVIEW", count: applications.filter((item) => item.status === "UNDER_REVIEW").length, description: "Being checked by admissions" },
+    { label: "Interview", status: "INTERVIEW", count: applications.filter((item) => item.status === "INTERVIEW").length, description: "Assessment or meeting stage" },
+    { label: "Accepted", status: "ACCEPTED", count: applications.filter((item) => item.status === "ACCEPTED").length, description: "Ready to enroll" },
+    { label: "Enrolled", status: "ENROLLED", count: applications.filter((item) => item.status === "ENROLLED").length, description: "Converted to student records" },
   ];
 
   return (
     <>
       <PageHeader
         title="Admissions"
-        description="Simple admission applications and enrollment decisions."
-        action={<div className="flex flex-wrap gap-2"><Link href="/admin/students/import" className={buttonStyles("outline")}><Users size={16} />Import existing students</Link><Link href={publicFormPath} className={buttonStyles("outline")}><ExternalLink size={16} />Open public form</Link><Link href="/admin/admissions/new" className={buttonStyles()}><Settings2 size={16} />Create admission form</Link></div>}
+        description="Run applications through screening, interviews, decisions and enrollment."
+        action={<div className="flex flex-wrap gap-2"><Link href={publicFormPath} className={buttonStyles("outline")}><ExternalLink size={16} />Public form</Link><Link href="/admin/admissions/register" className={buttonStyles("outline")}><Plus size={16} />Register applicant</Link><Link href="/admin/admissions/new" className={buttonStyles()}><Settings2 size={16} />Design form</Link></div>}
       />
-      {!selectedStatus ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{cards.map((card)=><button key={card.label} type="button" onClick={()=>setSelectedStatus(card.status)} className="min-h-36 rounded-[8px] border bg-surface p-4 text-left transition hover:border-[var(--school-primary)] hover:shadow-sm"><ClipboardList className="text-[var(--school-primary)]" size={20}/><p className="mt-3 font-semibold">{card.label}</p><p className="mt-1 text-xs text-muted">{card.description}</p><p className="mt-4 text-2xl font-bold">{card.count}</p></button>)}</div> : <>
+      {!selectedStatus ? <><Card className="mb-5 p-4"><div className="flex flex-wrap items-center gap-3 text-sm"><span className="inline-flex items-center gap-2 font-semibold"><CalendarCheck size={16} />Admissions pipeline</span>{cards.slice(1).map((card)=><button key={card.label} type="button" onClick={()=>setSelectedStatus(card.status)} className="rounded-[8px] border bg-surface px-3 py-2 font-medium hover:border-[var(--school-primary)]">{card.label}: {card.count}</button>)}</div></Card><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{cards.map((card)=><button key={card.label} type="button" onClick={()=>setSelectedStatus(card.status)} className="min-h-36 rounded-[8px] border bg-surface p-4 text-left transition hover:border-[var(--school-primary)] hover:shadow-sm"><ClipboardList className="text-[var(--school-primary)]" size={20}/><p className="mt-3 font-semibold">{card.label}</p><p className="mt-1 text-xs text-muted">{card.description}</p><p className="mt-4 text-2xl font-bold">{card.count}</p></button>)}</div></> : <>
       <Button className="mb-4" type="button" variant="outline" onClick={() => setSelectedStatus("")}><ArrowLeft size={16}/>Back to admission cards</Button>
       <Card className="mb-5 p-4"><SearchInput value={query} onChange={setQuery} placeholder="Search applicant, parent, phone, class or application no." /></Card>
       <Card className="overflow-hidden">
@@ -73,7 +75,7 @@ export function AdmissionsDashboard() {
             <thead className="bg-surface-muted text-xs uppercase text-muted"><tr>{["Applicant", "Class", "Parent", "Phone", "Submitted", "Status", "Action"].map((item) => <th key={item} className="px-5 py-3">{item}</th>)}</tr></thead>
             <tbody className="divide-y">
               {visible.map((item) => (
-                <tr key={item.id}>
+                <ClickableTableRow key={item.id} href={`/admin/admissions/${item.id}`} label={fullName(item)}>
                   <td className="px-5 py-4"><p className="font-semibold">{fullName(item)}</p><p className="text-xs text-muted">{item.applicationNumber}</p></td>
                   <td className="px-5 py-4">{state.classes.find((entry) => entry.id === item.classId)?.displayName ?? "Unknown class"}</td>
                   <td className="px-5 py-4">{item.parentName}</td>
@@ -81,7 +83,7 @@ export function AdmissionsDashboard() {
                   <td className="px-5 py-4">{formatDate(item.submittedAt)}</td>
                   <td className="px-5 py-4"><Badge tone={statusTone(item.status)}>{statusLabel(item.status)}</Badge></td>
                   <td className="px-5 py-4"><Link className="font-semibold text-[var(--school-primary)]" href={`/admin/admissions/${item.id}`}>View details</Link></td>
-                </tr>
+                </ClickableTableRow>
               ))}
             </tbody>
           </table>
@@ -101,7 +103,6 @@ export function AdmissionFormBuilderScreen() {
   const [customLabel, setCustomLabel] = useState("");
   const [customType, setCustomType] = useState<AdmissionFormFieldType>("text");
   const [busy, setBusy] = useState(false);
-  useEffect(() => setDraft(formConfig), [formConfig]);
   const updateField = (key: AdmissionFormField["key"], patch: Partial<Pick<AdmissionFormField, "enabled" | "required" | "label" | "type">>) => {
     setDraft((current) => ({
       ...current,
@@ -141,7 +142,7 @@ export function AdmissionFormBuilderScreen() {
 
   return (
     <>
-      <PageHeader title="Create Admission Form" description="Choose the fields parents will fill on the public admission page." backFallback="/admin/admissions" action={<Link href={publicFormPath} className={buttonStyles("outline")}><ExternalLink size={16} />Preview public form</Link>} />
+      <PageHeader title="Design Admission Form" description="Control the public application form parents see before submission." backFallback="/admin/admissions" action={<Link href={publicFormPath} className={buttonStyles("outline")}><ExternalLink size={16} />Preview public form</Link>} />
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
         <Card className="p-5">
           <h2 className="font-semibold">Public page content</h2>
@@ -213,7 +214,7 @@ export function NewAdmissionScreen() {
     setBusy(true);
     try {
       const item = await create(form);
-      toast("Admission form saved.", "success");
+      toast("Applicant registered.", "success");
       router.push(`/admin/admissions/${item.id}`);
     } catch (error) {
       toast(error instanceof Error ? error.message : "Admission form could not be saved.", "error");
@@ -224,7 +225,7 @@ export function NewAdmissionScreen() {
 
   return (
     <>
-      <PageHeader title="Admission Form" description="One page for applicant, parent and class details." backFallback="/admin/admissions" />
+      <PageHeader title="Register Applicant" description="Create a professional admission record for walk-in or phone applications." backFallback="/admin/admissions" />
       <div className="grid gap-5">
         <Card className="p-5">
           <h2 className="font-semibold">Student details</h2>
@@ -257,7 +258,7 @@ export function NewAdmissionScreen() {
           </div>
         </Card>
       </div>
-      <div className="mt-5 flex justify-end gap-2"><Link href="/admin/admissions" className={buttonStyles("outline")}>Cancel</Link><Button disabled={busy} onClick={() => void submit()}>{busy ? "Saving..." : "Submit admission form"}</Button></div>
+      <div className="mt-5 flex justify-end gap-2"><Link href="/admin/admissions" className={buttonStyles("outline")}>Cancel</Link><Button disabled={busy} onClick={() => void submit()}>{busy ? "Saving..." : "Create application"}</Button></div>
     </>
   );
 }
@@ -374,7 +375,7 @@ export function AdmissionDetailScreen({ applicationId }: { applicationId: string
 
   const enroll = async () => {
     const guardian = await createGuardian({ fullName: item.parentName, relationship: item.relationship, phone: item.parentPhone, email: item.parentEmail, address: item.address, isPrimaryContact: true, isEmergencyContact: true });
-    const student = await createStudent({ admissionNumber: "", firstName: item.firstName, middleName: item.middleName, lastName: item.lastName, gender: item.gender, dateOfBirth: item.dateOfBirth, admissionDate: new Date().toISOString().slice(0, 10), nationality: item.nationality, address: item.address, medicalNotes: item.medicalNotes, emergencyContactName: item.parentName, emergencyContactPhone: item.parentPhone, schoolLevel: item.schoolLevel, classId: item.classId, parentIds: [guardian.id], guardianIds: [guardian.id], guardianName: guardian.fullName, guardianPhone: guardian.phone, guardianEmail: guardian.email, status: "ACTIVE" });
+    const student = await createStudent({ admissionNumber: "", firstName: item.firstName, middleName: item.middleName, lastName: item.lastName, gender: item.gender, dateOfBirth: item.dateOfBirth, admissionDate: new Date().toISOString().slice(0, 10), nationality: item.nationality, address: item.address, photoUrl: item.photoUrl, medicalNotes: item.medicalNotes, emergencyContactName: item.parentName, emergencyContactPhone: item.parentPhone, schoolLevel: item.schoolLevel, classId: item.classId, parentIds: [guardian.id], guardianIds: [guardian.id], guardianName: guardian.fullName, guardianPhone: guardian.phone, guardianEmail: guardian.email, status: "ACTIVE" });
     await updateStatus(item.id, "ENROLLED", "Student record created from admission form.", student.id);
     toast("Applicant enrolled as student.", "success");
   };

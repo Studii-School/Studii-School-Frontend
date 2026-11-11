@@ -25,6 +25,7 @@ import {
 } from "./dashboard-widget-registry";
 import { useDashboardLayouts } from "./dashboard-layout-context";
 import { DashboardEditToolbar } from "./dashboard-edit-toolbar";
+import { DashboardQuickLinks } from "./dashboard-quick-links";
 import { DashboardWidgetContent } from "./dashboard-widget-content";
 import { DashboardWidgetShell } from "./dashboard-widget-shell";
 
@@ -144,30 +145,33 @@ export function CustomisableDashboard({
         title={title}
         description={description}
         action={
-          <DashboardEditToolbar
-            editing={editMode}
-            onEdit={() => setEditMode(true)}
-            onDone={() => {
-              commit();
-              setEditMode(false);
-            }}
-            onRestore={() =>
-              confirm({
-                title: "Restore default dashboard?",
-                description:
-                  "Widget positions, sizes, visibility and pinning will return to the role defaults. Records are not affected.",
-                confirmLabel: "Restore Default",
-                destructive: true,
-                onConfirm: async () => {
-                  await reset(role);
-                  toast(
-                    "Dashboard layout restored successfully.",
-                    "success",
-                  );
-                },
-              })
-            }
-          />
+          <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
+            <DashboardQuickLinks />
+            <DashboardEditToolbar
+              editing={editMode}
+              onEdit={() => setEditMode(true)}
+              onDone={() => {
+                commit();
+                setEditMode(false);
+              }}
+              onRestore={() =>
+                confirm({
+                  title: "Restore default dashboard?",
+                  description:
+                    "Widget positions, sizes, visibility and pinning will return to the role defaults. Records are not affected.",
+                  confirmLabel: "Restore Default",
+                  destructive: true,
+                  onConfirm: async () => {
+                    await reset(role);
+                    toast(
+                      "Dashboard layout restored successfully.",
+                      "success",
+                    );
+                  },
+                })
+              }
+            />
+          </div>
         }
       />
       {editMode && (
@@ -202,7 +206,7 @@ export function CustomisableDashboard({
           {[1, 2, 3, 4].map((item) => (
             <div
               key={item}
-              className="h-40 animate-pulse rounded-xl bg-surface-muted"
+              className="h-32 animate-pulse rounded-xl bg-surface-muted"
             />
           ))}
         </div>
@@ -214,11 +218,11 @@ export function CustomisableDashboard({
               layouts={renderedLayouts}
               breakpoints={DASHBOARD_BREAKPOINTS}
               cols={DASHBOARD_COLUMNS}
-              rowHeight={28}
+              rowHeight={24}
               margin={{
-                xl: [16, 16],
-                lg: [16, 16],
-                md: [14, 14],
+                xl: [12, 12],
+                lg: [12, 12],
+                md: [12, 12],
                 sm: [12, 12],
                 xs: [12, 12],
               }}

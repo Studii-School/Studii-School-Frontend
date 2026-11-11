@@ -11,6 +11,11 @@ export interface TimetableEntry {
   endTime: string;
   room?: string;
   note?: string;
+  academicSessionId?: string;
+  sessionId?: string;
+  termId?: string;
+  academicSession?: string;
+  term?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -23,4 +28,8 @@ export interface TimetableInput {
   endTime: string;
   room?: string;
   note?: string;
+  academicSessionId?: string;
+  termId?: string;
+  academicSession?: string;
+  term?: string;
 }

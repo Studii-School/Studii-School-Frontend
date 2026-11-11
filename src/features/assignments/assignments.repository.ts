@@ -1,4 +1,7 @@
 import { academicsRepository } from "@/features/academics/academics.repository";
+import type { AcademicPeriodScope } from "@/features/academic-period/academic-period-context";
+import { isUuid } from "@/features/academic-period/academic-period.repository";
+import { filterAssignmentsByPeriod } from "./assignments-period-utils";
 import { assignmentRemovalPolicy } from "@/features/action-feedback/record-action.policy";
 import { apiRequest, readStoredToken } from "@/lib/api";
 import { getAssignmentsState, saveAssignmentsState } from "./assignments.storage";
@@ -33,8 +36,12 @@ function ensureSubmissionRows(
 }
 
 export class LocalAssignmentsRepository {
-  async getState() {
-    return getAssignmentsState();
+  async getState(context?: AcademicPeriodScope) {
+    const state = await getAssignmentsState();
+    if (!context?.isReady) return state;
+    const assignments = filterAssignmentsByPeriod(state.assignments, context);
+    const ids = new Set(assignments.map((item) => item.id));
+    return { assignments, submissions: state.submissions.filter((item) => ids.has(item.assignmentId)) };
   }
 
   async saveTeacherAssignment(
@@ -102,7 +109,7 @@ export class LocalAssignmentsRepository {
       state,
       item,
       academics.students
-        .filter((entry) => entry.classId === item.classId)
+        .filter((entry) => academics.studentEnrollments.some((enrollment) => enrollment.studentId === entry.id && enrollment.academicSessionId === (item.academicSessionId ?? item.sessionId) && enrollment.classId === item.classId && enrollment.status === "ACTIVE"))
         .map((student) => student.id),
       now,
     );
@@ -167,8 +174,7 @@ export class LocalAssignmentsRepository {
       (entry) => entry.id === assignmentId && entry.status === "PUBLISHED",
     );
     const academics = await academicsRepository.getState();
-    const student = academics.students.find((entry) => entry.id === studentId);
-    const resolvedClassId = student?.classId ?? studentClassId;
+    const resolvedClassId = academics.studentEnrollments.find((entry) => entry.studentId === studentId && entry.academicSessionId === (assignment?.academicSessionId ?? assignment?.sessionId) && entry.status === "ACTIVE")?.classId ?? studentClassId;
     let submission = state.submissions.find(
       (entry) => entry.assignmentId === assignmentId && entry.studentId === studentId,
     );
@@ -284,9 +290,10 @@ function unwrapState(data: BackendAssignmentsResponse) {
 }
 
 class BackendAssignmentsRepository extends LocalAssignmentsRepository {
-  async getState() {
-    if (!hasBackendSession()) return super.getState();
-    return unwrapState(await apiRequest<BackendAssignmentsResponse>("/assignments"));
+  async getState(context?: AcademicPeriodScope) {
+    if (!hasBackendSession() || (context?.isReady && !context.hasBackendIds)) return super.getState(context);
+    const query = context?.isReady ? `?sessionId=${encodeURIComponent(context.academicSessionId)}&termId=${encodeURIComponent(context.termId)}` : "";
+    return unwrapState(await apiRequest<BackendAssignmentsResponse>(`/assignments${query}`));
   }
 
   async saveTeacherAssignment(
@@ -294,10 +301,12 @@ class BackendAssignmentsRepository extends LocalAssignmentsRepository {
     input: AssignmentInput,
     assignmentId?: string,
   ) {
-    if (!hasBackendSession()) return super.saveTeacherAssignment(teacherUserId, input, assignmentId);
+    if (!hasBackendSession() || !isUuid(input.termId) || !isUuid(input.sessionId ?? input.academicSessionId)) return super.saveTeacherAssignment(teacherUserId, input, assignmentId);
+    const body = { ...input };
+    delete body.academicSessionId;
     const response = await apiRequest<{ assignment: Assignment }>(assignmentId ? `/assignments/${assignmentId}` : "/assignments", {
       method: assignmentId ? "PATCH" : "POST",
-      body: JSON.stringify(input),
+      body: JSON.stringify(body),
     });
     return normalizeAssignment(response.assignment);
   }

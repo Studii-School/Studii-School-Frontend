@@ -26,6 +26,10 @@ export const schoolFeatures: SchoolFeature[] = [
   { key: "results", label: "Results", description: "Result entry and result viewing." },
   { key: "timetable", label: "Timetable", description: "Timetable pages for teachers and learners." },
   { key: "assignments", label: "Assignments", description: "Classwork, homework and assignment workflows." },
+  { key: "library", label: "Library", description: "Books, loans, returns and overdue notices." },
+  { key: "transport", label: "Transport", description: "Routes, bus assignments and pickup updates." },
+  { key: "health", label: "Health & Safety", description: "Health records, medication, incidents and emergency contacts." },
+  { key: "inventory", label: "Inventory", description: "School assets, supplies and maintenance tracking." },
 ];
 
 export const defaultFeatureSettings = schoolFeatures.reduce((result, feature) => {

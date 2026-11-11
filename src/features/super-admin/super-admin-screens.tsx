@@ -6,11 +6,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PasswordField } from "@/components/ui/password-field";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { SectionCard } from "@/components/dashboard/section-card";
 import { SearchInput } from "@/components/shared/search-input";
-import { apiRequest } from "@/lib/api";
+import { DashboardQuickLinks } from "@/features/dashboard-customisation/dashboard-quick-links";
 import { DEFAULT_SCHOOL_ID, getSchoolFeatureSettings, loadSchoolFeatureSettings, schoolFeatures, type SchoolFeatureSettings, updateSchoolFeatureSettings } from "@/lib/school-features";
 import { createSchool, createSchoolAdmin, deleteSchool, getSchools, reactivateSchool, suspendSchool } from "./super-admin.api";
 import type { SchoolAdminFormState, SchoolFormState, SchoolRecord } from "./super-admin.types";
@@ -42,25 +43,41 @@ function featureSchoolOptions(schools: SchoolRecord[]) {
 
 export function SuperAdminDashboardScreen() {
   const [schools, setSchools] = useState<SchoolRecord[]>([]);
-  const [profileState, setProfileState] = useState("Not loaded");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const activeSchools = schools.filter((school) => statusTone(school.status) === "success").length;
   const suspendedSchools = schools.filter((school) => statusTone(school.status) === "warning").length;
 
   useEffect(() => {
     let mounted = true;
-    Promise.allSettled([getSchools(), apiRequest("/auth/profile")]).then(([schoolResult, profileResult]) => {
-      if (!mounted) return;
-      if (schoolResult.status === "fulfilled") setSchools(schoolResult.value);
-      setProfileState(profileResult.status === "fulfilled" ? "Connected" : "Profile unavailable");
-      setLoading(false);
-    });
+    getSchools()
+      .then((items) => { if (mounted) setSchools(items); })
+      .catch(() => { if (mounted) setError("Unable to load school statistics. Please refresh to try again."); })
+      .finally(() => { if (mounted) setLoading(false); });
     return () => {
       mounted = false;
     };
   }, []);
 
-  return <><PageHeader title="Super admin" description="Manage schools, platform access and school administrators." /><div className="grid gap-4 md:grid-cols-3"><Card className="p-5"><Building2 className="text-primary" size={22} /><p className="mt-4 text-sm text-muted">Total schools</p><p className="mt-1 text-3xl font-bold">{loading ? "..." : schools.length}</p></Card><Card className="p-5"><CheckCircle2 className="text-success" size={22} /><p className="mt-4 text-sm text-muted">Active schools</p><p className="mt-1 text-3xl font-bold">{loading ? "..." : activeSchools}</p></Card><Card className="p-5"><ShieldPlus className="text-warning" size={22} /><p className="mt-4 text-sm text-muted">Suspended schools</p><p className="mt-1 text-3xl font-bold">{loading ? "..." : suspendedSchools}</p></Card></div><div className="mt-6 grid gap-4 lg:grid-cols-[1fr_22rem]"><SectionCard title="Recent schools" description="Latest records from the backend"><SchoolTable schools={schools.slice(0, 6)} loading={loading} /></SectionCard><Card className="p-5"><p className="text-sm font-semibold">Backend status</p><dl className="mt-4 space-y-3 text-sm"><div className="flex items-center justify-between gap-3"><dt className="text-muted">API URL</dt><dd className="font-medium">localhost:3000</dd></div><div className="flex items-center justify-between gap-3"><dt className="text-muted">Profile</dt><dd><Badge tone={profileState === "Connected" ? "success" : "warning"}>{profileState}</Badge></dd></div><div className="flex items-center justify-between gap-3"><dt className="text-muted">Schools API</dt><dd><Badge tone={loading ? "neutral" : "success"}>{loading ? "Loading" : "Ready"}</Badge></dd></div></dl></Card></div></>;
+  return (
+    <>
+      <PageHeader title="Super admin" description="Manage schools, platform access and school administrators." action={<DashboardQuickLinks />} />
+      {error ? <p role="alert" className="text-sm text-danger">{error}</p> : (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {[
+            { label: "Total schools", value: schools.length, icon: Building2, tone: "text-primary" },
+            { label: "Active schools", value: activeSchools, icon: CheckCircle2, tone: "text-success" },
+            { label: "Suspended schools", value: suspendedSchools, icon: ShieldPlus, tone: "text-warning" },
+          ].map(({ label, value, icon: Icon, tone }) => (
+            <Card key={label} className="p-3">
+              <div className="flex items-center justify-between gap-2"><p className="text-sm text-muted">{label}</p><Icon className={tone} size={18} /></div>
+              <p className="mt-2 text-xl font-bold">{loading ? "..." : value}</p>
+            </Card>
+          ))}
+        </div>
+      )}
+    </>
+  );
 }
 
 export function SuperAdminSchoolsScreen() {
@@ -153,7 +170,7 @@ export function SuperAdminSchoolsScreen() {
               </select>
               <Input required minLength={2} placeholder="Admin name" value={adminForm.name} onChange={(event) => setAdminForm({ ...adminForm, name: event.target.value })} />
               <Input required type="email" placeholder="Admin email" value={adminForm.email} onChange={(event) => setAdminForm({ ...adminForm, email: event.target.value })} />
-              <Input required type="password" placeholder="Temporary password" value={adminForm.password} onChange={(event) => setAdminForm({ ...adminForm, password: event.target.value })} />
+              <PasswordField label="Temporary password" required value={adminForm.password} onChange={(event) => setAdminForm({ ...adminForm, password: event.target.value })} />
               <Button className="w-full" type="submit" disabled={pending === "create-admin"}><ShieldPlus size={16} />Create admin</Button>
             </form>
           </Card>

@@ -11,6 +11,9 @@ export interface Announcement {
   body?: string;
   audiences: AnnouncementAudience[];
   selectedClassIds: string[];
+  academicSessionId?: string;
+  sessionId?: string;
+  termId?: string;
   status: AnnouncementStatus;
   isPinned: boolean;
   publishAt?: string;

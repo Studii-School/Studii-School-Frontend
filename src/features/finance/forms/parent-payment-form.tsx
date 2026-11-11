@@ -6,11 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatNaira } from "@/lib/currency";
 import { useFinance } from "../finance-context";
+import { billableInvoices } from "../finance-scope";
 import type { StudentInvoice } from "../finance.types";
 
 export function ParentPaymentForm({ invoices: providedInvoices, onClose }: { invoices?: StudentInvoice[]; onClose: () => void }) {
-  const { state, createFlutterwaveCheckout } = useFinance();
-  const invoices = providedInvoices ?? state.invoices.filter((item) => item.outstandingBalance > 0);
+  const { allState: state, createFlutterwaveCheckout } = useFinance();
+  const invoices = billableInvoices(providedInvoices ?? state.invoices).filter((item) => item.outstandingBalance > 0);
   const [step, setStep] = useState(1);
   const [invoiceId, setInvoiceId] = useState(invoices[0]?.id ?? "");
   const [amountMode, setAmountMode] = useState<"full" | "instalment" | "custom">("full");
@@ -19,7 +20,7 @@ export function ParentPaymentForm({ invoices: providedInvoices, onClose }: { inv
   const [txRef, setTxRef] = useState("");
   const [error, setError] = useState("");
 
-  const invoice = state.invoices.find((item) => item.id === invoiceId);
+  const invoice = invoices.find((item) => item.id === invoiceId);
   const maxPayable = invoice ? Math.max(0, invoice.outstandingBalance) : 0;
   const amount = invoice ? (amountMode === "full" ? maxPayable : amountMode === "instalment" ? Math.min(50000, maxPayable) : custom) : 0;
   const amountInvalid = !invoice || amount <= 0 || amount > maxPayable;
@@ -50,7 +51,7 @@ export function ParentPaymentForm({ invoices: providedInvoices, onClose }: { inv
     try {
       const checkout = await createFlutterwaveCheckout({ invoiceId: invoice.id, amount });
       setTxRef(checkout.txRef);
-      window.location.href = checkout.checkoutUrl;
+      window.location.assign(checkout.checkoutUrl);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Flutterwave checkout could not be started.");
     } finally {

@@ -7,25 +7,33 @@ import {
   Pencil,
   Printer,
   Upload,
-  X,
 } from "lucide-react";
 import Link from "@/features/navigation-progress/navigation-progress-link";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Badge } from "@/components/ui/badge";
+import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { ButtonTabs } from "@/components/ui/tabs";
+import { SidePanel } from "@/components/ui/side-panel";
 import { useAcademics } from "@/features/academics/academics-context";
 import type { StudentStatus } from "@/features/academics/academics.types";
+import { useAcademicPeriod } from "@/features/academic-period/academic-period-context";
+import { academicTermLabel } from "@/features/academic-period/academic-period.types";
+import { filterAssignmentsByPeriod } from "@/features/assignments/assignments-period-utils";
 import { useAssignments } from "@/features/assignments/assignments-context";
 import { useAttendance } from "@/features/attendance/attendance-context";
+import { attendanceUserLabel } from "@/features/attendance/attendance-user-label";
 import { useFinance } from "@/features/finance/finance-context";
 import { formatNaira } from "@/lib/currency";
 import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
+import { PersonNameLink } from "@/features/people/person-name-link";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { buildStudentCompleteRecord } from "./student-record";
+import { StudentFormPage } from "./student-form-screen";
 
 const tabs = [
   "Overview",
@@ -94,26 +102,7 @@ function MoveClassDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4">
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="move-student-title"
-        className="w-full max-w-lg rounded-2xl bg-surface p-5 shadow-2xl"
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h2 id="move-student-title" className="text-lg font-bold">
-              Move Class
-            </h2>
-            <p className="mt-1 text-sm text-muted">
-              Current class: {current?.displayName ?? "Unassigned"}
-            </p>
-          </div>
-          <button type="button" aria-label="Close" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
+    <SidePanel open title="Move Class" description={`Current class: ${current?.displayName ?? "Unassigned"}`} onClose={onClose} maxWidth="md">
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <label className="text-sm font-medium sm:col-span-2">
             New class
@@ -163,8 +152,7 @@ function MoveClassDialog({
             {saving ? "Moving student..." : "Move Student"}
           </Button>
         </div>
-      </section>
-    </div>
+    </SidePanel>
   );
 }
 
@@ -172,37 +160,94 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
   const { state: academics, isLoading, updateStudentStatus, addStudentDocument, removeStudentDocument, assignStudentParents } =
     useAcademics();
   const { state: assignments } = useAssignments();
-  const { registers } = useAttendance();
-  const { state: finance } = useFinance();
+  const { registers, sessionRegisters } = useAttendance();
+  const { allState: finance } = useFinance();
   const { settings } = useSchoolSettings();
+  const { selectedSession, selectedTerm } = useAcademicPeriod();
   const { confirm, toast } = useActionFeedback();
   const [tab, setTab] = useState<Tab>("Overview");
+  const [showEdit, setShowEdit] = useState(false);
   const [showMove, setShowMove] = useState(false);
   const [attendanceStatus, setAttendanceStatus] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const attendancePeriod = useMemo(
+    () => ({
+      academicSessionId: selectedSession?.id,
+      startDate: selectedSession?.startDate || settings.resumptionDate,
+      endDate: selectedSession?.endDate || settings.closingDate,
+      requireStartDate: Boolean(selectedSession),
+    }),
+    [selectedSession, settings.closingDate, settings.resumptionDate],
+  );
   const record = buildStudentCompleteRecord(
     studentId,
     academics,
     assignments,
-    registers,
+    sessionRegisters,
     finance,
+    attendancePeriod,
+  );
+  const periodAssignmentRecords = useMemo(
+    () =>
+      record
+        ? record.assignments.filter(({ assignment }) =>
+            filterAssignmentsByPeriod([assignment], {
+              sessionId: selectedSession?.id,
+              termId: selectedTerm?.id,
+              startDate: selectedTerm?.startDate,
+              endDate: selectedTerm?.endDate,
+              requireStartDate: Boolean(selectedTerm),
+            }).length > 0,
+          )
+        : [],
+    [record, selectedSession?.id, selectedTerm],
+  );
+  const periodSessionName = selectedSession?.name || settings.currentAcademicSession;
+  const periodTermLabel = selectedTerm ? academicTermLabel(selectedTerm.name) : settings.currentTerm;
+  const periodInvoices = useMemo(
+    () =>
+      (record?.invoices ?? []).filter(
+        (item) =>
+          item.academicSession === periodSessionName &&
+          item.term === periodTermLabel,
+      ),
+    [periodSessionName, periodTermLabel, record],
   );
 
   const totals = useMemo(() => {
-    if (!record) return { charged: 0, paid: 0, outstanding: 0, overdue: 0 };
+    if (!record) return { charged: 0, paid: 0, outstanding: 0, overdue: 0, currentTermFee: 0 };
+    const currentTermInvoices = periodInvoices.filter(
+      (item) =>
+        !["Cancelled", "Waived"].includes(item.status),
+    );
+    const currentTermInvoiceTotal = currentTermInvoices.reduce(
+      (sum, item) => sum + item.totalAmount,
+      0,
+    );
+    const currentTermFeeStructureTotal = finance.feeStructures
+      .filter((fee) => {
+        if (fee.status !== "Active") return false;
+        if (fee.academicSession !== periodSessionName) return false;
+        if (fee.term !== periodTermLabel) return false;
+        if (fee.applicableToAllStudents || fee.classGroup === "All classes") return true;
+        if (fee.classIds?.includes(record.student.classId)) return true;
+        return fee.classGroup === record.currentClass?.displayName;
+      })
+      .reduce((sum, fee) => sum + fee.amount, 0);
     return {
-      charged: record.invoices.reduce((sum, item) => sum + item.totalAmount, 0),
-      paid: record.invoices.reduce((sum, item) => sum + item.amountPaid, 0),
-      outstanding: record.invoices.reduce(
+      charged: record.invoices.filter((item) => !["Cancelled", "Waived"].includes(item.status)).reduce((sum, item) => sum + item.totalAmount, 0),
+      paid: record.payments.filter((item) => item.status === "Successful").reduce((sum, item) => sum + item.amount, 0),
+      outstanding: record.invoices.filter((item) => !["Cancelled", "Waived"].includes(item.status)).reduce(
         (sum, item) => sum + item.outstandingBalance,
         0,
       ),
       overdue: record.invoices
         .filter((item) => item.status === "Overdue")
         .reduce((sum, item) => sum + item.outstandingBalance, 0),
+      currentTermFee: currentTermInvoiceTotal || currentTermFeeStructureTotal,
     };
-  }, [record]);
+  }, [finance.feeStructures, periodInvoices, periodSessionName, periodTermLabel, record]);
 
   if (isLoading) {
     return <div className="py-12 text-center text-sm text-muted">Loading student record...</div>;
@@ -221,7 +266,7 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
     .filter(Boolean)
     .join(" ");
   const initials = `${student.firstName[0] ?? ""}${student.lastName[0] ?? ""}`;
-  const completedAssignments = record.assignments.filter(
+  const completedAssignments = periodAssignmentRecords.filter(
     (item) =>
       item.submission &&
       ["SUBMITTED", "LATE", "GRADED"].includes(item.submission.status),
@@ -293,13 +338,10 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
         description={`${student.admissionNumber} · ${record.currentClass?.displayName ?? "No class"}`}
         action={
           <div className="flex flex-wrap gap-2">
-            <Link
-              href={`/admin/students/${student.id}/edit`}
-              className="inline-flex min-h-10 items-center gap-2 rounded-[10px] border px-4 text-sm font-semibold"
-            >
+            <Button type="button" variant="outline" onClick={() => setShowEdit(true)}>
               <Pencil size={15} />
               Edit Student
-            </Link>
+            </Button>
             <Button type="button" variant="outline" onClick={() => setShowMove(true)}>
               <ArrowRightLeft size={15} />
               Move Class
@@ -314,9 +356,12 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
 
       <Card className="mb-5 min-w-0 p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-          <div className="grid size-16 shrink-0 place-items-center rounded-full bg-primary-light text-xl font-bold text-[var(--school-primary)]">
-            {initials}
-          </div>
+          <Avatar
+            initials={initials}
+            src={student.photoUrl}
+            alt={`${fullName} profile`}
+            className="size-20 border-2 text-xl"
+          />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="break-words text-xl font-bold">{fullName}</h2>
@@ -327,7 +372,7 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
             <p className="mt-1 text-sm text-muted">
               {record.currentClass?.displayName ?? "No class"} ·{" "}
               {student.schoolLevel === "PRIMARY" ? "Primary School" : "Secondary School"} ·{" "}
-              {settings.currentAcademicSession} · {settings.currentTerm}
+              {periodSessionName} · {periodTermLabel}
             </p>
           </div>
           <Select
@@ -347,24 +392,7 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
         </div>
       </Card>
 
-      <div className="mb-5 max-w-full overflow-x-auto">
-        <div className="flex min-w-max gap-2 border-b">
-          {tabs.map((item) => (
-            <button
-              key={item}
-              type="button"
-              className={`border-b-2 px-3 py-3 text-sm font-medium ${
-                tab === item
-                  ? "border-[var(--school-primary)] text-[var(--school-primary)]"
-                  : "border-transparent text-muted"
-              }`}
-              onClick={() => setTab(item)}
-            >
-              {item}
-            </button>
-          ))}
-        </div>
-      </div>
+      <ButtonTabs label="Student record tabs" items={tabs} value={tab} onChange={setTab} />
 
       {tab === "Overview" && (
         <div className="space-y-5">
@@ -372,9 +400,10 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
             {[
               ["Attendance", `${record.attendanceSummary.percentage}%`],
               ["Average score", scored.length ? `${average}%` : "No scores"],
+              ["This term fee", formatNaira(totals.currentTermFee)],
               [
                 "Assignments",
-                `${completedAssignments}/${record.assignments.length}`,
+                `${completedAssignments}/${periodAssignmentRecords.length}`,
               ],
               ["Outstanding", formatNaira(totals.outstanding)],
               ["Class position", "Not available"],
@@ -417,7 +446,7 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
           <div className="border-b p-4">
             <h2 className="font-semibold">Academic Record</h2>
             <p className="mt-1 text-sm text-muted">
-              {settings.currentAcademicSession} · {settings.currentTerm}
+              {periodSessionName} · {periodTermLabel}
             </p>
           </div>
           <div className="max-w-full overflow-x-auto">
@@ -434,7 +463,7 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {record.assignments
+                {periodAssignmentRecords
                   .filter((item) => typeof item.submission?.score === "number")
                   .map(({ assignment, submission }) => (
                     <tr key={assignment.id}>
@@ -459,7 +488,7 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
       {tab === "Assignments" && (
         <DataTable
           headings={["Assignment", "Subject", "Due date", "Status", "Submitted", "Score", "Action"]}
-          rows={record.assignments.map(({ assignment, submission }) => [
+          rows={periodAssignmentRecords.map(({ assignment, submission }) => [
             assignment.title,
             subjectName(assignment.subjectId),
             new Date(assignment.dueAt).toLocaleDateString(),
@@ -472,7 +501,7 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
               View assignment
             </Link>,
           ])}
-          empty="No assignments are linked to this student's current class."
+          empty="No assignments are linked to this student for this term."
         />
       )}
 
@@ -490,7 +519,7 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
               ["Absent", record.attendanceSummary.absent],
               ["Late", record.attendanceSummary.late],
               ["Excused", record.attendanceSummary.excused],
-              ["Total days", record.attendanceSummary.total],
+              ["School days elapsed", record.attendanceSummary.total],
             ].map(([label, value]) => (
               <Card key={label} className="p-4">
                 <p className="text-xs text-muted">{label}</p>
@@ -508,7 +537,13 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
                 item.arrivalTime ?? "—",
                 item.note ?? "—",
                 academics.classes.find((entry) => entry.id === item.classId)?.displayName ?? "—",
-                item.markedByUserId,
+                attendanceUserLabel(
+                  item.markedByUserId,
+                  academics,
+                  registers.find((register) => register.id === item.registerId)?.auditHistory.find(
+                    (audit) => audit.actorUserId === item.markedByUserId,
+                  )?.actorUser,
+                ),
                 new Date(item.updatedAt).toLocaleString(),
                 <Link key={item.id} href={`/admin/attendance/${item.classId}/${item.date}`} className="font-semibold text-[var(--school-primary)]">Open</Link>,
               ])}
@@ -521,7 +556,7 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
         <div className="space-y-5">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {[
-              ["Fees charged", formatNaira(totals.charged)],
+              ["Fees charged (all terms)", formatNaira(totals.charged)],
               ["Amount paid", formatNaira(totals.paid)],
               ["Outstanding", formatNaira(totals.outstanding)],
               ["Overdue", formatNaira(totals.overdue)],
@@ -557,7 +592,7 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
                 item.reference,
                 item.status,
                 receipt ? (
-                  <Link key={item.id} href={`/parent/payments/receipt/${receipt.id}`} className="inline-flex items-center gap-1 font-semibold text-[var(--school-primary)]">
+                  <Link key={item.id} href={`/admin/finance/receipts?receipt=${receipt.id}`} className="inline-flex items-center gap-1 font-semibold text-[var(--school-primary)]">
                     <Download size={14} /> Receipt
                   </Link>
                 ) : "—",
@@ -573,7 +608,8 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
           {record.guardians.map((guardian) => (
             <Card key={guardian.id} className="p-5">
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="font-semibold">{guardian.fullName}</h2>
+                <Avatar initials={guardian.fullName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2)} src={guardian.photoUrl} alt={`${guardian.fullName} profile`} />
+                <h2 className="font-semibold"><PersonNameLink kind="guardian" id={academics.guardians.some((item) => item.id === guardian.id) ? guardian.id : undefined}>{guardian.fullName}</PersonNameLink></h2>
                 {guardian.isPrimaryContact && <Badge tone="primary">Primary contact</Badge>}
                 {guardian.isEmergencyContact && <Badge>Emergency contact</Badge>}
                 {(guardian.userId || guardian.accountStatus || guardian.email) && <Badge tone="success">Login ready</Badge>}
@@ -643,7 +679,36 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
           onClose={() => setShowMove(false)}
         />
       )}
+
+      {showEdit && (
+        <StudentEditDialog
+          studentId={student.id}
+          name={fullName}
+          onClose={() => setShowEdit(false)}
+        />
+      )}
     </div>
+  );
+}
+
+function StudentEditDialog({
+  studentId,
+  name,
+  onClose,
+}: {
+  studentId: string;
+  name: string;
+  onClose: () => void;
+}) {
+  return (
+    <SidePanel open title="Edit student details" description={name} onClose={onClose} maxWidth="2xl">
+          <StudentFormPage
+            studentId={studentId}
+            variant="modal"
+            onCancel={onClose}
+            onSaved={onClose}
+          />
+    </SidePanel>
   );
 }
 

@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable react-hooks/set-state-in-effect -- async widget hydration resets its loading state when the selected term changes. */
 
 import { useEffect, useState } from "react";
 import { CalendarCheck, School, Users, WalletCards } from "lucide-react";
@@ -7,47 +8,62 @@ import { QuickActions } from "@/components/dashboard/quick-actions";
 import { SectionCard } from "@/components/dashboard/section-card";
 import { SimpleTable } from "@/components/dashboard/simple-table";
 import { Card } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
 import { useAcademics } from "@/features/academics/academics-context";
 import { getClassesForTeacher } from "@/features/academics/academics.selectors";
+import { resolveStudentSession } from "@/features/academics/student-session";
+import { useAcademicPeriod } from "@/features/academic-period/academic-period-context";
+import { academicTermLabel } from "@/features/academic-period/academic-period.types";
+import { dateBelongsToPeriod } from "@/features/academic-period/period-scope-utils";
 import { useAdmissions } from "@/features/admissions/admissions-context";
 import { useAnnouncements } from "@/features/announcements/announcements-context";
 import { getAnnouncementsForUser } from "@/features/announcements/announcements.utils";
 import { useAssignments } from "@/features/assignments/assignments-context";
+import { filterAssignmentsByPeriod } from "@/features/assignments/assignments-period-utils";
 import { useAttendance } from "@/features/attendance/attendance-context";
 import {
+  filterAttendanceByPeriod,
   getAttendanceSummaryForStudent,
+  selectAttendanceStudentId,
   summarizeRegister,
 } from "@/features/attendance/attendance.utils";
 import { DashboardEvents } from "@/features/events/dashboard-events";
 import { CollectionProgress } from "@/features/finance/components/collection-progress";
 import { PaymentTable } from "@/features/finance/components/payment-table";
 import { useFinance } from "@/features/finance/finance-context";
+import { billableInvoices, summarizeFinanceState } from "@/features/finance/finance-scope";
+import { parentPaymentInvoices, studentPaymentInvoices } from "@/features/finance/payment-audience";
+import { parentChildrenFromAcademics } from "@/features/parents/parent-child-utils";
+import { PersonNameLink } from "@/features/people/person-name-link";
 import { resultsRepository } from "@/features/results/results.repository";
-import type { StudentResult } from "@/features/results/results.types";
+import type { FamilyResult } from "@/features/results/results.types";
+import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
 import { timetableRepository } from "@/features/timetable/timetable.repository";
+import { visibleTimetableEntries } from "@/features/timetable/timetable-period-utils";
 import type { TimetableDay, TimetableEntry } from "@/features/timetable/timetable.types";
 import { readStoredUser } from "@/lib/auth";
+import { readStoredToken } from "@/lib/api";
 import { formatNaira } from "@/lib/currency";
 import type { TableRow } from "@/types";
 import type { PortalRole } from "./dashboard-widget.types";
 
 type MetricData = {
   value: string;
-  note: string;
+  note: React.ReactNode;
   icon: React.ComponentType<{ size?: number }>;
 };
 
 function Metric({ title, data }: { title: string; data: MetricData }) {
   const Icon = data.icon;
   return (
-    <Card className="h-full p-4">
-      <div className="flex justify-between">
-        <div>
+    <Card className="h-full p-3">
+      <div className="flex justify-between gap-2">
+        <div className="min-w-0">
           <p className="text-sm text-muted">{title}</p>
-          <p className="mt-2 text-2xl font-bold">{data.value}</p>
-          <p className="mt-2 text-xs text-muted">{data.note}</p>
+          <p className="mt-1.5 break-words text-xl font-bold">{data.value}</p>
+          <p className="mt-1.5 text-xs text-muted">{data.note}</p>
         </div>
-        <span className="h-fit rounded-[10px] bg-[color-mix(in_srgb,var(--school-primary)_12%,white)] p-2 text-[var(--school-primary)]">
+        <span className="h-fit shrink-0 rounded-[10px] bg-[color-mix(in_srgb,var(--school-primary)_12%,white)] p-2 text-[var(--school-primary)]">
           <Icon size={18} />
         </span>
       </div>
@@ -57,11 +73,23 @@ function Metric({ title, data }: { title: string; data: MetricData }) {
 
 function teacherDisplayName(academics: ReturnType<typeof useAcademics>["state"], teacherId?: string) {
   if (!teacherId) return "Unassigned";
-  const teacher = academics.teachers.find((item) => item.userId === teacherId || item.id === teacherId);
-  if (teacher) return `${teacher.firstName} ${teacher.lastName}`.trim();
-  const staff = academics.staff.find((item) => item.userId === teacherId || item.id === teacherId);
-  if (staff) return staff.fullName || staff.email;
-  return "Unassigned";
+  const matchesId = (record: { id?: string; userId?: string; staffId?: string }) =>
+    [record.id, record.userId, record.staffId].some((id) => id === teacherId);
+  const teacher = academics.teachers.find(matchesId);
+  if (teacher) {
+    const name = `${teacher.firstName} ${teacher.lastName}`.trim();
+    if (name) return name;
+  }
+  const staff = academics.staff.find(matchesId);
+  if (staff) return staff.fullName || `${staff.firstName} ${staff.lastName}`.trim() || staff.email;
+  const assignedTeacher = academics.classes
+    .flatMap((schoolClass) => schoolClass.assignedTeachers ?? [])
+    .find(matchesId);
+  if (assignedTeacher) {
+    const name = `${assignedTeacher.firstName} ${assignedTeacher.lastName}`.trim();
+    if (name) return name;
+  }
+  return teacherId;
 }
 
 const emptyRows: TableRow[] = [];
@@ -80,15 +108,19 @@ export function DashboardWidgetContent({
   widgetId: string;
   title: string;
 }) {
-  const { state: academics } = useAcademics();
+  const { state: academics, isLoading: academicsLoading, error: academicsError } = useAcademics();
   const { applications } = useAdmissions();
   const { state: assignments } = useAssignments();
   const { announcements } = useAnnouncements();
-  const { registers } = useAttendance();
-  const { state: finance, summary } = useFinance();
-  const [latestResults, setLatestResults] = useState<StudentResult[]>([]);
+  const { registers, sessionRegisters } = useAttendance();
+  const { allState: allFinance, source: financeSource } = useFinance();
+  const { settings } = useSchoolSettings();
+  const { selectedSession, selectedTerm, scope, isLoading: periodLoading } = useAcademicPeriod();
+  const [latestResults, setLatestResults] = useState<FamilyResult[]>([]);
   const [teacherResultAssignments, setTeacherResultAssignments] = useState(0);
   const [timetableEntries, setTimetableEntries] = useState<TimetableEntry[]>([]);
+  const [widgetDataLoading, setWidgetDataLoading] = useState(() => ["student-latest-result", "parent-latest-result", "teacher-results-pending", "teacher-classes", "student-timetable"].includes(widgetId));
+  const [selectedParentChildId, setSelectedParentChildId] = useState("");
 
   const user = readStoredUser();
   const activeClasses = role === "teacher"
@@ -97,52 +129,106 @@ export function DashboardWidgetContent({
   const activeStudents = academics.students.filter((item) => item.status === "ACTIVE");
   const activeTeachers = academics.teachers.filter((item) => item.status === "ACTIVE");
   const today = new Date().toISOString().slice(0, 10);
-  const todayRegisters = registers.filter((item) => item.date === today);
+  const attendancePeriod = {
+    academicSessionId: selectedSession?.id,
+    startDate: selectedSession?.startDate || settings.resumptionDate,
+    endDate: selectedSession?.endDate || settings.closingDate,
+    requireStartDate: Boolean(selectedSession),
+  };
+  const selectedPeriodDateScope = {
+    startDate: selectedTerm?.startDate || settings.resumptionDate,
+    endDate: selectedTerm?.endDate || settings.closingDate,
+    requireStartDate: Boolean(selectedTerm),
+  };
+  const periodRegisters = filterAttendanceByPeriod(registers, { academicSessionId: selectedSession?.id, termId: selectedTerm?.id });
+  const todayRegisters = periodRegisters.filter((item) => item.date === today);
   const submittedToday = todayRegisters.filter((item) => item.status === "SUBMITTED");
   const attendanceStudentId =
-    registers
+    periodRegisters
       .flatMap((register) => register.entries)
       .find((entry) => entry.studentId)?.studentId ?? "";
-  const selectedStudentId =
-    role === "student"
-      ? user?.studentId ??
-        academics.students.find((student) => student.userId === user?.id)?.id ??
-        attendanceStudentId
-      : academics.students[0]?.id ?? attendanceStudentId;
+  const resolvedStudent = role === "student"
+    ? resolveStudentSession(academics, user, readStoredToken() ? undefined : "student-yusuf")
+    : undefined;
+  const selectedStudentId = role === "student"
+    ? selectAttendanceStudentId(periodRegisters, resolvedStudent?.studentId)
+    : academics.students[0]?.id ?? attendanceStudentId;
   const selectedStudent =
     academics.students.find((student) => student.id === selectedStudentId) ??
-    academics.students[0];
+    (role === "student" ? undefined : academics.students[0]);
   const selectedClass = selectedStudent
     ? academics.classes.find((item) => item.id === selectedStudent.classId)
     : activeClasses[0];
   const selectedRegister = selectedStudent
-    ? registers.find((item) =>
+    ? periodRegisters.find((item) =>
         item.entries.some((entry) => entry.studentId === selectedStudentId),
       )
     : todayRegisters[0];
+  const periodAssignments = filterAssignmentsByPeriod(assignments.assignments, {
+    sessionId: selectedSession?.id,
+    termId: selectedTerm?.id,
+    ...selectedPeriodDateScope,
+  });
+  const periodSessionName = selectedSession?.name || settings.currentAcademicSession;
+  const periodTermLabel = selectedTerm ? academicTermLabel(selectedTerm.name) : settings.currentTerm;
+  const periodTimetableEntries = visibleTimetableEntries(timetableEntries, {
+    academicSessionId: selectedSession?.id,
+    termId: selectedTerm?.id,
+    academicSession: periodSessionName,
+    term: periodTermLabel,
+    isCurrentPeriod: scope.isCurrentPeriod,
+  }, Boolean(readStoredToken()));
+  const periodInvoices = billableInvoices(allFinance.invoices);
+  const periodPayments = allFinance.payments;
+  const periodReconciliationTransactions = allFinance.reconciliationTransactions;
+  const periodNeedsReview = periodReconciliationTransactions.filter((item) => !["Auto-matched", "Manually matched"].includes(item.status)).length;
+  const periodReconciliationRate = periodReconciliationTransactions.length ? Math.round(((periodReconciliationTransactions.length - periodNeedsReview) / periodReconciliationTransactions.length) * 100) : 0;
   const attendanceSummary = selectedStudentId
-    ? getAttendanceSummaryForStudent(registers, selectedStudentId)
+    ? getAttendanceSummaryForStudent(sessionRegisters, selectedStudentId, attendancePeriod)
     : summarizeRegister(todayRegisters[0]);
   useEffect(() => {
-    if (widgetId === "student-latest-result") void resultsRepository.getMine({}).then(setLatestResults).catch(() => setLatestResults([]));
-    if (widgetId === "parent-latest-result") void resultsRepository.getChildren({}).then(setLatestResults).catch(() => setLatestResults([]));
-    if (widgetId === "teacher-results-pending") void resultsRepository.getTeacherAssignments().then((items) => setTeacherResultAssignments(items.length)).catch(() => setTeacherResultAssignments(0));
-    if (widgetId === "teacher-classes" || widgetId === "student-timetable") void timetableRepository.list().then(setTimetableEntries).catch(() => setTimetableEntries([]));
-  }, [widgetId]);
+    let active = true;
+    const needsAsyncData = ["student-latest-result", "parent-latest-result", "teacher-results-pending", "teacher-classes", "student-timetable"].includes(widgetId);
+    setWidgetDataLoading(needsAsyncData);
+    if (!needsAsyncData) return () => { active = false; };
+
+    const resultPeriod = { sessionId: selectedSession?.id, termId: selectedTerm?.id };
+    const request = widgetId === "student-latest-result"
+      ? resultsRepository.getMine(resultPeriod).then((items) => { if (active) setLatestResults(items); }).catch(() => { if (active) setLatestResults([]); })
+      : widgetId === "parent-latest-result"
+        ? resultsRepository.getChildren(resultPeriod).then((items) => { if (active) setLatestResults(items); }).catch(() => { if (active) setLatestResults([]); })
+        : widgetId === "teacher-results-pending"
+          ? resultsRepository.getTeacherAssignments().then((items) => { if (active) setTeacherResultAssignments(items.length); }).catch(() => { if (active) setTeacherResultAssignments(0); })
+          : timetableRepository.list().then((items) => { if (active) setTimetableEntries(items); }).catch(() => { if (active) setTimetableEntries([]); });
+    void request.finally(() => { if (active) setWidgetDataLoading(false); });
+    return () => { active = false; };
+  }, [selectedSession?.id, selectedTerm?.id, widgetId]);
+  if (academicsLoading || periodLoading || widgetDataLoading) {
+    return <div className="h-full min-h-24 animate-pulse rounded-xl bg-surface-muted" aria-label="Loading dashboard data" />;
+  }
   const latestResult = latestResults[0];
-  const studentInvoice = selectedStudent
-    ? finance.invoices.find((item) => item.studentId === selectedStudent.id)
+  const latestScore = latestResult?.status === "IN_PROGRESS"
+    ? latestResult.subjectScores.flatMap((subject) => Object.entries(subject.components).map(([name, score]) => ({ name, score })))[0]
     : undefined;
-  const childIds = new Set(academics.students.map((item) => item.id));
-  const parentInvoices = finance.invoices.filter((item) => childIds.has(item.studentId));
+  const studentInvoices = role === "student"
+    ? studentPaymentInvoices(allFinance.invoices, financeSource === "api", resolvedStudent?.studentId)
+    : [];
+  const studentOutstanding = studentInvoices.reduce((sum, item) => sum + item.outstandingBalance, 0);
+  const studentInvoice = studentInvoices.filter((item) => item.outstandingBalance > 0).sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0];
+  const parentChildIds = new Set(parentChildrenFromAcademics(academics).map((item) => item.id));
+  const parentInvoices = role === "parent"
+    ? parentPaymentInvoices(allFinance.invoices, financeSource === "api", parentChildIds, user?.id, user?.email)
+    : [];
   const parentOutstanding = parentInvoices.reduce(
     (sum, item) => sum + item.outstandingBalance,
     0,
   );
+  const { amountCollected: allCollected, outstandingAmount: allOutstanding, collectionRate: allCollectionRate } = summarizeFinanceState(allFinance);
+  const periodAnnouncements = announcements;
   const visibleAnnouncements =
-    role === "admin"
-      ? announcements
-      : getAnnouncementsForUser(announcements, role);
+    role === "admin" || readStoredToken()
+      ? periodAnnouncements
+      : getAnnouncementsForUser(periodAnnouncements, role);
 
   const metricMap: Record<string, MetricData> = {
     "admin-students": {
@@ -156,23 +242,23 @@ export function DashboardWidgetContent({
       icon: School,
     },
     "admin-fees-collected": {
-      value: formatNaira(summary.amountCollected),
-      note: `${summary.collectionRate}% of expected`,
+      value: formatNaira(allCollected),
+      note: `${allCollectionRate}% collected across all terms`,
       icon: WalletCards,
     },
     "admin-outstanding-fees": {
-      value: formatNaira(summary.outstandingAmount),
-      note: `${finance.invoices.filter((item) => item.outstandingBalance > 0).length} accounts`,
+      value: formatNaira(allOutstanding),
+      note: `${allFinance.invoices.filter((item) => item.outstandingBalance > 0).length} invoices across all terms`,
       icon: WalletCards,
     },
     "admin-announcement-drafts": {
-      value: String(announcements.filter((item) => item.status === "DRAFT").length),
-      note: `${announcements.filter((item) => item.status === "PUBLISHED").length} published`,
+      value: String(periodAnnouncements.filter((item) => item.status === "DRAFT").length),
+      note: `${periodAnnouncements.filter((item) => item.status === "PUBLISHED").length} published`,
       icon: School,
     },
     "admin-active-assignments": {
-      value: String(assignments.assignments.filter((item) => item.status === "PUBLISHED").length),
-      note: `${assignments.assignments.length} total assignments`,
+      value: String(periodAssignments.filter((item) => item.status === "PUBLISHED").length),
+      note: `${periodAssignments.length} total assignments`,
       icon: School,
     },
     "teacher-attendance-pending": {
@@ -193,30 +279,28 @@ export function DashboardWidgetContent({
     "student-current-class": {
       value: selectedClass?.displayName ?? "Unassigned",
       note: selectedStudent
-        ? `${selectedStudent.firstName} ${selectedStudent.lastName}`
+        ? <PersonNameLink kind="student" id={selectedStudent.id}>{selectedStudent.firstName} {selectedStudent.lastName}</PersonNameLink>
         : "No student profile",
       icon: School,
     },
     "student-attendance": {
       value: `${attendanceSummary.percentage}%`,
-      note: `${attendanceSummary.present} present · ${attendanceSummary.absent} absent`,
+      note: attendanceSummary.total ? `${attendanceSummary.present} present · ${attendanceSummary.unmarked} unmarked school days` : "Session has not started",
       icon: CalendarCheck,
     },
     "student-latest-result": {
-      value: latestResult?.grade ?? "No results",
-      note: latestResult ? `${latestResult.average}% average` : "No published result",
+      value: latestResult?.status === "IN_PROGRESS" ? latestScore ? `${latestScore.name}: ${latestScore.score}` : "In progress" : latestResult?.grade ?? "No results",
+      note: latestResult?.status === "IN_PROGRESS" ? "Saved score · Results page" : latestResult ? `${latestResult.average}% average` : "No scores yet",
       icon: School,
     },
     "student-fee-status": {
-      value: studentInvoice?.status ?? "No invoice",
-      note: studentInvoice
-        ? `${formatNaira(studentInvoice.outstandingBalance)} outstanding`
-        : "No active fee",
+      value: studentOutstanding > 0 ? "Payment due" : studentInvoices.length ? "Paid in full" : "No fees assigned",
+      note: studentOutstanding > 0 ? `${formatNaira(studentOutstanding)} outstanding across terms` : studentInvoices.length ? "All assigned fees are paid" : "No invoices yet",
       icon: WalletCards,
     },
     "student-fee-balance": {
-      value: formatNaira(studentInvoice?.outstandingBalance ?? 0),
-      note: `Due ${studentInvoice?.dueDate ?? "not set"}`,
+      value: formatNaira(studentOutstanding),
+      note: studentInvoice ? `Next due ${studentInvoice.dueDate}` : "No unpaid fees",
       icon: WalletCards,
     },
     "student-next-payment": {
@@ -226,19 +310,19 @@ export function DashboardWidgetContent({
     },
     "parent-attendance": {
       value: `${attendanceSummary.percentage}%`,
-      note: selectedStudent
-        ? `${selectedStudent.firstName} · This term`
-        : "No linked child",
+      note: attendanceSummary.total
+        ? selectedStudent ? <><PersonNameLink kind="student" id={selectedStudent.id}>{selectedStudent.firstName}</PersonNameLink> · This session</> : "This session"
+        : "Session has not started",
       icon: CalendarCheck,
     },
     "parent-latest-result": {
-      value: latestResult?.grade ?? "No results",
-      note: latestResult ? `${latestResult.student?.firstName ?? "Child"} · ${latestResult.average}%` : "No published result",
+      value: latestResult?.status === "IN_PROGRESS" ? latestScore ? `${latestScore.name}: ${latestScore.score}` : "In progress" : latestResult?.grade ?? "No results",
+      note: latestResult?.status === "IN_PROGRESS" ? `${latestResult.student?.firstName ?? "Child"} · Saved score` : latestResult ? `${latestResult.student?.firstName ?? "Child"} · ${latestResult.average}%` : "No scores yet",
       icon: School,
     },
     "parent-outstanding": {
       value: formatNaira(parentOutstanding),
-      note: "Across linked children",
+      note: parentOutstanding > 0 ? "Across linked children" : parentInvoices.length ? "All assigned fees are paid" : "No invoices yet",
       icon: WalletCards,
     },
     "parent-next-due": {
@@ -267,7 +351,7 @@ export function DashboardWidgetContent({
           role === "admin" ? (
             <a
               className="text-xs font-semibold text-[var(--school-primary)]"
-              href="/admin/communications/announcements"
+              href="/admin/announcements"
             >
               Manage announcements
             </a>
@@ -341,7 +425,7 @@ export function DashboardWidgetContent({
     const todayDay = todayTimetableDay();
     const activeClassIds = new Set(activeClasses.map((item) => item.id));
     const rows = todayDay
-      ? timetableEntries
+      ? periodTimetableEntries
           .filter((entry) => entry.day === todayDay && entry.teacherUserId === user?.id && activeClassIds.has(entry.classId))
           .sort((a, b) => a.startTime.localeCompare(b.startTime))
           .slice(0, 6)
@@ -377,7 +461,7 @@ export function DashboardWidgetContent({
   if (widgetId === "admin-recent-payments") {
     return (
       <SectionCard title={title}>
-        <PaymentTable payments={finance.payments.slice(0, 4)} />
+        <PaymentTable payments={allFinance.payments.slice(0, 4)} />
       </SectionCard>
     );
   }
@@ -386,9 +470,9 @@ export function DashboardWidgetContent({
     return (
       <SectionCard title={title}>
         <PaymentTable
-          payments={finance.payments
+          payments={allFinance.payments
             .filter((item) =>
-              parentInvoices.some((invoice) => invoice.id === item.invoiceId),
+              (role === "parent" ? parentInvoices : studentInvoices).some((invoice) => invoice.id === item.invoiceId),
             )
             .slice(0, 3)}
         />
@@ -397,8 +481,8 @@ export function DashboardWidgetContent({
   }
 
   if (widgetId === "student-recent-receipt") {
-    const receipts = finance.receipts.filter(
-      (item) => item.invoiceId === studentInvoice?.id,
+    const receipts = allFinance.receipts.filter(
+      (item) => studentInvoices.some((invoice) => invoice.id === item.invoiceId),
     );
     return (
       <SectionCard title={title}>
@@ -418,7 +502,7 @@ export function DashboardWidgetContent({
   }
 
   if (widgetId === "student-assignments") {
-    const rows = assignments.assignments.slice(0, 5).map((item) => ({
+    const rows = periodAssignments.slice(0, 5).map((item) => ({
       subject: item.subjectId,
       task: item.title,
       due: item.dueAt.slice(0, 10),
@@ -442,6 +526,7 @@ export function DashboardWidgetContent({
       <SectionCard title={title}>
         <ActivityList
           items={academics.studentActivities
+            .filter((item) => dateBelongsToPeriod(item.createdAt, selectedPeriodDateScope))
             .slice(0, 5)
             .map((item) => `${item.action}: ${item.detail}`)}
         />
@@ -462,8 +547,8 @@ export function DashboardWidgetContent({
       <Metric
         title={title}
         data={{
-          value: String(summary.needsReview),
-          note: `${summary.reconciliationRate}% matched`,
+          value: String(periodNeedsReview),
+          note: `${periodReconciliationRate}% matched in selected term`,
           icon: WalletCards,
         }}
       />
@@ -475,8 +560,8 @@ export function DashboardWidgetContent({
       <Metric
         title={title}
         data={{
-          value: String(finance.invoices.filter((item) => item.status === "Overdue").length),
-          note: "Require follow-up",
+          value: String(periodInvoices.filter((item) => item.status === "Overdue").length),
+          note: "Require follow-up in selected term",
           icon: CalendarCheck,
         }}
       />
@@ -484,7 +569,7 @@ export function DashboardWidgetContent({
   }
 
   if (widgetId === "admin-payment-methods") {
-    const methods = [...new Set(finance.payments.map((item) => item.method))];
+    const methods = [...new Set(periodPayments.map((item) => item.method))];
     return (
       <SectionCard title={title}>
         <div className="space-y-3 p-5">
@@ -493,7 +578,7 @@ export function DashboardWidgetContent({
               <span>{method}</span>
               <b>
                 {formatNaira(
-                  finance.payments
+                  periodPayments
                     .filter((item) => item.method === method && item.status === "Successful")
                     .reduce((sum, item) => sum + item.amount, 0),
                 )}
@@ -507,7 +592,7 @@ export function DashboardWidgetContent({
   }
 
   if (widgetId === "admin-balances-class") {
-    const balances = finance.invoices.reduce<Record<string, number>>(
+    const balances = periodInvoices.reduce<Record<string, number>>(
       (all, item) => ({
         ...all,
         [item.className]: (all[item.className] ?? 0) + item.outstandingBalance,
@@ -539,7 +624,7 @@ export function DashboardWidgetContent({
         actions={
           role === "admin"
             ? [
-                { label: "Manage announcements", href: "/admin/communications/announcements", icon: "announcement" },
+                { label: "Manage announcements", href: "/admin/announcements", icon: "announcement" },
                 { label: "Record payment", href: "/admin/finance/payments", icon: "payment" },
               ]
             : role === "teacher"
@@ -550,27 +635,119 @@ export function DashboardWidgetContent({
     );
   }
 
-  if (widgetId === "parent-child-selector") {
+  if (widgetId === "student-class-owners" || widgetId === "parent-class-owners") {
+    if (academicsLoading || academicsError) {
+      return <Card className="h-full p-4 text-sm text-muted">{academicsLoading ? "Loading class owners…" : "Class owner information could not be loaded."}</Card>;
+    }
+    const classEntries = role === "parent"
+      ? parentChildrenFromAcademics(academics).flatMap((child) => {
+          const schoolClass = academics.classes.find((item) => item.id === child.classId);
+          return schoolClass ? [{ schoolClass, students: [{ id: child.id, name: `${child.firstName} ${child.lastName}` }] }] : [];
+        })
+      : selectedClass
+        ? [{ schoolClass: selectedClass, students: [] as Array<{ id: string; name: string }> }]
+        : [];
+    const groupedClasses = [...classEntries.reduce((groups, entry) => {
+      const existing = groups.get(entry.schoolClass.id);
+      if (existing) {
+        existing.students.push(...entry.students);
+      } else {
+        groups.set(entry.schoolClass.id, { ...entry, students: [...entry.students] });
+      }
+      return groups;
+    }, new Map<string, (typeof classEntries)[number]>()).values()];
+
     return (
-      <Card className="p-4">
-        <label className="flex flex-col gap-2 text-sm font-medium sm:flex-row sm:items-center">
-          Viewing child
-          <select className="h-10 rounded-[10px] border bg-surface px-3">
-            {academics.students.map((student) => (
-              <option key={student.id}>
-                {student.firstName} {student.lastName}
-                {academics.classes.find((item) => item.id === student.classId)
-                  ? ` · ${academics.classes.find((item) => item.id === student.classId)?.displayName}`
-                  : ""}
-              </option>
-            ))}
-            {!academics.students.length && <option>No linked children</option>}
-          </select>
-        </label>
+      <Card className="h-full p-4">
+        {groupedClasses.length ? (
+          <div className="space-y-4">
+            {groupedClasses.map(({ schoolClass, students }) => {
+              const assignments = academics.teacherAssignments.filter((item) =>
+                item.classId === schoolClass.id &&
+                item.assignmentType === "CLASS_TEACHER" &&
+                !item.isRemoved,
+              );
+              const ownersById = new Map<string, "MAIN" | "CO">();
+              for (const owner of schoolClass.classOwnerAssignments ?? []) {
+                ownersById.set(owner.userId, owner.assignmentRole);
+              }
+              if (!ownersById.size) {
+                for (const assignment of assignments) {
+                  const existingRole = ownersById.get(assignment.teacherUserId);
+                  if (!existingRole || assignment.assignmentRole !== "CO") {
+                    ownersById.set(assignment.teacherUserId, assignment.assignmentRole === "CO" ? "CO" : "MAIN");
+                  }
+                }
+                if (schoolClass.classTeacherUserId && !ownersById.has(schoolClass.classTeacherUserId)) {
+                  ownersById.set(schoolClass.classTeacherUserId, "MAIN");
+                }
+              }
+              const owners = [...ownersById.entries()].sort((a, b) =>
+                a[1] === b[1] ? a[0].localeCompare(b[0]) : a[1] === "MAIN" ? -1 : 1,
+              );
+
+              return (
+                <section key={schoolClass.id} className="rounded-xl border p-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                    <h3 className="font-semibold">{schoolClass.displayName}</h3>
+                    {students.length > 0 && <p className="text-xs text-muted">{students.map((student, index) => <span key={student.id}>{index > 0 && ", "}<PersonNameLink kind="student" id={student.id}>{student.name}</PersonNameLink></span>)}</p>}
+                  </div>
+                  {owners.length ? (
+                    <ul className="mt-2 space-y-1.5 text-sm">
+                      {owners.map(([teacherId, assignmentRole]) => {
+                        const teacherName = schoolClass.classOwnerAssignments?.find((owner) => owner.userId === teacherId)?.name
+                          || teacherDisplayName(academics, teacherId);
+                        return (
+                          <li key={teacherId} className="flex gap-2">
+                            <span className="shrink-0 text-muted">{assignmentRole === "CO" ? "Co-owner" : "Class owner"}</span>
+                            <PersonNameLink kind="staff" id={teacherId} className="font-medium">{teacherName}</PersonNameLink>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="mt-2 text-sm text-muted">No class owner assigned.</p>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-sm text-muted">{role === "parent" ? "No linked child classes found." : "No class assigned."}</p>
+        )}
       </Card>
     );
   }
 
+  if (widgetId === "parent-child-selector") {
+    const childOptions = academics.students.map((student) => {
+      const className = academics.classes.find((item) => item.id === student.classId)?.displayName;
+
+      return {
+        value: student.id,
+        label: `${student.firstName} ${student.lastName}`,
+        description: className,
+      };
+    });
+    const selectedChildId = childOptions.some((item) => item.value === selectedParentChildId)
+      ? selectedParentChildId
+      : childOptions[0]?.value ?? "";
+
+    return (
+      <Card className="p-4">
+        <Select
+          className="max-w-sm"
+          disabled={!childOptions.length}
+          emptyMessage="No linked children"
+          label="Viewing child"
+          onChange={setSelectedParentChildId}
+          options={childOptions}
+          placeholder="No linked children"
+          value={selectedChildId}
+        />
+      </Card>
+    );
+  }
   if (widgetId === "parent-payment-plan") {
     return (
       <SectionCard title={title}>

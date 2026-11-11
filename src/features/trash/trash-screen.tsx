@@ -8,6 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
+import { useAcademicPeriod } from "@/features/academic-period/academic-period-context";
+import { dateBelongsToPeriod } from "@/features/academic-period/period-scope-utils";
+import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
 import { getTrash, restoreTrashRecord, type TrashRecord, type TrashResponse } from "./trash.repository";
 
 const labels: Record<string, string> = {
@@ -68,6 +71,8 @@ function sampleMeta(item: TrashRecord) {
 }
 
 export function TrashScreen() {
+  const { selectedTerm } = useAcademicPeriod();
+  const { settings } = useSchoolSettings();
   const [data, setData] = useState<TrashResponse>({ records: [], groups: [] });
   const [selected, setSelected] = useState("");
   const [loading, setLoading] = useState(true);
@@ -91,18 +96,40 @@ export function TrashScreen() {
     void load("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const periodScope = {
+    startDate: selectedTerm?.startDate || settings.resumptionDate,
+    endDate: selectedTerm?.endDate || settings.closingDate,
+    requireStartDate: Boolean(selectedTerm),
+  };
+  const periodRecords = useMemo(
+    () =>
+      data.records.filter((item) => {
+        const snapshot = item.snapshot ?? {};
+        const dateValue =
+          typeof snapshot.publishAt === "string" ? snapshot.publishAt :
+          typeof snapshot.startDate === "string" ? snapshot.startDate :
+          typeof snapshot.date === "string" ? snapshot.date :
+          typeof snapshot.createdAt === "string" ? snapshot.createdAt :
+          item.deletedAt;
+        return dateBelongsToPeriod(dateValue, periodScope);
+      }),
+    [data.records, periodScope.endDate, periodScope.requireStartDate, periodScope.startDate],
+  );
 
   const groups = useMemo(
     () =>
       data.groups.length
-        ? data.groups
-        : data.records.reduce<Array<{ key: string; count: number }>>((items, record) => {
+        ? data.groups.map((group) => ({
+            ...group,
+            count: periodRecords.filter((record) => record.category === group.key).length,
+          })).filter((group) => group.count > 0)
+        : periodRecords.reduce<Array<{ key: string; count: number }>>((items, record) => {
             const existing = items.find((item) => item.key === record.category);
             if (existing) existing.count += 1;
             else items.push({ key: record.category, count: 1 });
             return items;
           }, []),
-    [data],
+    [data.groups, periodRecords],
   );
 
   const openGroup = async (key: string) => {
@@ -156,7 +183,7 @@ export function TrashScreen() {
         <>
           <Button className="mb-4" type="button" variant="outline" onClick={() => { setSelected(""); void load(""); }}><ArrowLeft size={16} />Back to trash groups</Button>
           <div className="grid gap-4">
-            {data.records.map((item) => (
+            {periodRecords.map((item) => (
               <Card key={item.id} className="p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
@@ -176,7 +203,7 @@ export function TrashScreen() {
                 </div>
               </Card>
             ))}
-            {!data.records.length && !loading && <EmptyState title={`No deleted ${labels[selected]?.toLowerCase() ?? selected}`} description="This trash group is empty." />}
+            {!periodRecords.length && !loading && <EmptyState title={`No deleted ${labels[selected]?.toLowerCase() ?? selected}`} description="This trash group is empty for the selected term." />}
           </div>
         </>
       )}

@@ -28,4 +28,5 @@ reconciliationTransactions:[
 {id:"txn-5",reference:"NARRATION-NONE-19",payerName:"Unknown Payer",amount:85000,date:"2026-09-21",channel:"Bank transfer",matchConfidence:12,status:"Unmatched",narrative:"No usable narration"},
 {id:"txn-6",reference:"PAY-2026-10892",payerName:"Aisha Musa",amount:165000,date:"2026-09-18",channel:"Online card",suggestedStudent:"Zainab Musa",suggestedInvoice:"INV-2026-01084",matchConfidence:100,status:"Auto-matched",narrative:"Online checkout"}],
 paymentPlans:[{id:"plan-zainab",invoiceId:"inv-zainab",name:"Three-part term plan",instalments:[{id:"i1",dueDate:"2026-09-18",amount:85000,status:"Paid"},{id:"i2",dueDate:"2026-09-30",amount:80000,status:"Paid"},{id:"i3",dueDate:"2026-10-30",amount:85000,status:"Upcoming"}]}],
+staffFinanceEntries:[],
 activity:["Bank statement imported · 24 transactions","18 transactions automatically matched","Receipt GFC-RCP-2026-00422 generated","Payment reminder batch prepared"]};

@@ -7,6 +7,7 @@ import { ArrowLeft, ArrowRight } from "lucide-react";
 import { Logo } from "@/components/shared/logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordField } from "@/components/ui/password-field";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { firstTimePassword } from "@/lib/api";
 import { routeForRole } from "@/lib/auth";
@@ -47,14 +48,8 @@ export default function FirstTimeLoginPage() {
           <span className="mb-2 block text-sm font-medium">Email</span>
           <Input autoComplete="username" required type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
         </label>
-        <label className="block">
-          <span className="mb-2 block text-sm font-medium">New password</span>
-          <Input autoComplete="new-password" required type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-        </label>
-        <label className="block">
-          <span className="mb-2 block text-sm font-medium">Confirm password</span>
-          <Input autoComplete="new-password" required type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
-        </label>
+        <PasswordField autoComplete="new-password" label="New password" required value={password} onChange={(event) => setPassword(event.target.value)} />
+        <PasswordField autoComplete="new-password" label="Confirm password" required value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
         <Button className="w-full" disabled={pending} type="submit">
           {pending ? "Creating password..." : "Create password"}
           <ArrowRight size={17} />

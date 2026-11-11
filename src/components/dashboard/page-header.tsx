@@ -17,12 +17,14 @@ export function PageHeader({
   action,
   showBack,
   backFallback,
+  onBack,
 }: {
   title: string;
   description: string;
   action?: React.ReactNode;
   showBack?: boolean;
   backFallback?: string;
+  onBack?: () => void;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -41,6 +43,10 @@ export function PageHeader({
           variant="ghost"
           type="button"
           onClick={() => {
+            if (onBack) {
+              onBack();
+              return;
+            }
             const previousHref = previousAppHistoryHref(currentHref);
             if (previousHref) {
               prepareAppHistoryBack(currentHref, previousHref);

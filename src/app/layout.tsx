@@ -1,20 +1,64 @@
 import type { Metadata } from "next";
-import { Geist } from "next/font/google";
+import { Plus_Jakarta_Sans } from "next/font/google";
 import "react-grid-layout/css/styles.css";
 import "./globals.css";
-import { SchoolSettingsProvider } from "@/features/school-settings/school-settings-provider";
-import { EventsProvider } from "@/features/events/events-provider";
-import { DashboardLayoutProvider } from "@/features/dashboard-customisation/dashboard-layout-provider";
-import { FinanceProvider } from "@/features/finance/finance-provider";
-import { NavigationProgressProvider } from "@/features/navigation-progress/navigation-progress-provider";
-import { AnnouncementsProvider } from "@/features/announcements/announcements-provider";
-import { AttendanceProvider } from "@/features/attendance/attendance-provider";
-import { AcademicsProvider } from "@/features/academics/academics-provider";
-import { AssignmentsProvider } from "@/features/assignments/assignments-provider";
-import { ActionFeedbackProvider } from "@/features/action-feedback/action-feedback-provider";
-import { AdmissionsProvider } from "@/features/admissions/admissions-provider";
+import { AppProviders } from "./providers";
 
-const geist = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
+const appFont = Plus_Jakarta_Sans({ variable: "--font-app-sans", subsets: ["latin"] });
+
+const themeInitScript = `
+(() => {
+  const valid = (value) => /^#[0-9A-F]{6}$/i.test(value || "");
+  const clamp = (value) => Math.max(0, Math.min(255, Math.round(value)));
+  const rgb = (hex) => {
+    const color = valid(hex) ? hex : "#075985";
+    return { r: parseInt(color.slice(1, 3), 16), g: parseInt(color.slice(3, 5), 16), b: parseInt(color.slice(5, 7), 16) };
+  };
+  const hex = ({ r, g, b }) => "#" + [r, g, b].map((value) => clamp(value).toString(16).padStart(2, "0")).join("").toUpperCase();
+  const mix = (source, target, weight) => {
+    const a = rgb(source), b = rgb(target);
+    return hex({ r: a.r * (1 - weight) + b.r * weight, g: a.g * (1 - weight) + b.g * weight, b: a.b * (1 - weight) + b.b * weight });
+  };
+  const contrast = (color) => {
+    const value = rgb(color);
+    return ((0.2126 * value.r + 0.7152 * value.g + 0.0722 * value.b) / 255) > 0.58 ? "#172033" : "#FFFFFF";
+  };
+  try {
+    const user = JSON.parse(localStorage.getItem("user") || "null");
+    const userKey = user && (user.id || user.userId || user.email) ? "schoolos.theme.preference." + (user.id || user.userId || user.email) : "schoolos.theme.preference";
+    const storedTheme = localStorage.getItem(userKey) || localStorage.getItem("schoolos.theme.preference");
+    const theme = storedTheme === "dark" ? "dark" : "light";
+    const primary = "#075985";
+    const dark = theme === "dark";
+    const secondary = "#0F766E";
+    const accent = "#F59E0B";
+    const vars = {
+      "--background": dark ? "#0B1120" : "#FFFFFF",
+      "--foreground": dark ? "#E5E7EB" : "#172033",
+      "--primary": primary,
+      "--primary-hover": mix(primary, dark ? "#FFFFFF" : "#000000", dark ? 0.12 : 0.16),
+      "--primary-light": dark ? mix(primary, "#0B1120", 0.68) : mix(primary, "#FFFFFF", 0.86),
+      "--secondary": secondary,
+      "--secondary-light": dark ? mix(secondary, "#0B1120", 0.72) : mix(secondary, "#FFFFFF", 0.86),
+      "--surface": dark ? "#111827" : "#FFFFFF",
+      "--surface-muted": dark ? "#1F2937" : "#F8FAFC",
+      "--border": dark ? "#334155" : "#E2E8F0",
+      "--muted": dark ? "#9CA3AF" : "#64748B",
+      "--success": dark ? "#4ADE80" : "#15803D",
+      "--warning": dark ? "#FBBF24" : "#B45309",
+      "--danger": dark ? "#F87171" : "#B91C1C",
+      "--school-primary": primary,
+      "--school-primary-foreground": contrast(primary),
+      "--school-secondary": secondary,
+      "--school-secondary-foreground": contrast(secondary),
+      "--school-accent": accent,
+      "--school-accent-foreground": contrast(accent)
+    };
+    Object.entries(vars).forEach(([key, value]) => document.documentElement.style.setProperty(key, value));
+    document.documentElement.dataset.portalTheme = theme;
+  } catch {}
+})();
+`;
 
 export const metadata: Metadata = {
   title: { default: "SchoolOS", template: "%s | SchoolOS" },
@@ -27,5 +71,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body className={`${geist.variable} font-sans antialiased`}><SchoolSettingsProvider><ActionFeedbackProvider><NavigationProgressProvider><AcademicsProvider><AdmissionsProvider><AssignmentsProvider><AnnouncementsProvider><AttendanceProvider><EventsProvider><FinanceProvider><DashboardLayoutProvider>{children}</DashboardLayoutProvider></FinanceProvider></EventsProvider></AttendanceProvider></AnnouncementsProvider></AssignmentsProvider></AdmissionsProvider></AcademicsProvider></NavigationProgressProvider></ActionFeedbackProvider></SchoolSettingsProvider></body></html>;
+  return <html lang="en" suppressHydrationWarning><body suppressHydrationWarning className={`${appFont.variable} font-sans antialiased`}><script dangerouslySetInnerHTML={{ __html: themeInitScript }} /><AppProviders>{children}</AppProviders></body></html>;
 }

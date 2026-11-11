@@ -31,12 +31,14 @@ export interface SchoolClass {
   name?: string;
   section?: string | null;
   academicYear?: string;
+  academicSessionId?: string;
   sortOrder: number;
   capacity?: number;
   classTeacherUserId?: string;
   classTeacherId?: string | null;
   assignedTeacherUserIds: string[];
   assignedTeacherIds?: string[];
+  classOwnerAssignments?: Array<{ userId: string; assignmentRole: "MAIN" | "CO"; name?: string }>;
   studentIds: string[];
   status: ClassStatus;
   createdAt: string;
@@ -52,6 +54,7 @@ export interface SchoolClass {
     createdAt?: string;
     updatedAt?: string;
   }>;
+  periodTeacherAssignments?: TeacherClassAssignment[];
 }
 
 export type StudentStatus =
@@ -101,6 +104,8 @@ export interface Guardian {
   phone: string;
   email?: string;
   address?: string;
+  dateOfBirth?: string | null;
+  photoUrl?: string;
   accountStatus?: string;
   isPrimaryContact: boolean;
   isEmergencyContact: boolean;
@@ -134,6 +139,24 @@ export interface StudentClassHistory {
   effectiveDate: string;
   reason: string;
   createdAt: string;
+}
+
+export type StudentEnrollmentStatus =
+  | "ACTIVE"
+  | "TRANSFERRED"
+  | "WITHDRAWN"
+  | "COMPLETED";
+
+/** Session-owned class membership. Student identity remains permanent. */
+export interface StudentEnrollment {
+  id: string;
+  schoolId: string;
+  studentId: string;
+  academicSessionId: string;
+  classId: string;
+  status: StudentEnrollmentStatus;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface StudentInput {
@@ -175,6 +198,7 @@ export interface Teacher {
   department?: string;
   phone?: string;
   email?: string;
+  photoUrl?: string;
   subjectIds: string[];
   status: "ACTIVE" | "INACTIVE";
   createdAt: string;
@@ -200,6 +224,7 @@ export interface StaffMember {
   gender?: "Male" | "Female" | "MALE" | "FEMALE" | "OTHER" | null;
   dateOfBirth?: string | null;
   address?: string | null;
+  photoUrl?: string;
   assignedClassIds: string[];
   classTeacherClassIds: string[];
   subjectIds: string[];
@@ -208,6 +233,8 @@ export interface StaffMember {
     subjectId: string;
     subject?: Subject;
   }>;
+  /** Server persisted assignments scoped to an academic session and term. */
+  periodAssignments?: TeacherClassAssignment[];
   subjects?: Subject[];
   assignedClasses?: SchoolClass[];
   classTeacherClasses?: SchoolClass[];
@@ -228,6 +255,7 @@ export interface StaffInput {
   gender?: "Male" | "Female" | "MALE" | "FEMALE" | "OTHER";
   dateOfBirth?: string;
   address?: string;
+  photoUrl?: string;
   assignedClassIds?: string[];
   classTeacherClassIds?: string[];
   subjectIds?: string[];
@@ -262,14 +290,21 @@ export interface TeacherClassAssignment {
   schoolId: string;
   teacherUserId: string;
   classId: string;
+  /** Cached label used to carry the assignment to a new session's matching class. */
+  className?: string;
+  academicSessionId?: string;
+  termId?: string;
   assignmentType: TeacherClassAssignmentType;
+  /** Identifies the lead teacher when more than one teacher shares a class or subject. */
+  assignmentRole?: "MAIN" | "CO";
+  isRemoved?: boolean;
   subjectIds: string[];
   createdAt: string;
   updatedAt: string;
 }
 
 export interface AcademicsState {
-  version: 2;
+  version: 3;
   classes: SchoolClass[];
   students: Student[];
   staff: StaffMember[];
@@ -280,9 +315,11 @@ export interface AcademicsState {
   studentDocuments: StudentDocument[];
   studentActivities: StudentActivity[];
   studentClassHistory: StudentClassHistory[];
+  studentEnrollments: StudentEnrollment[];
 }
 
 export interface CreateClassInput {
+  schoolId?: string;
   level: SchoolLevel;
   source?: ClassSource;
   templateKey?: string;
@@ -293,6 +330,7 @@ export interface CreateClassInput {
   /** Derived from baseName and suffix; accepted for legacy callers only. */
   displayName?: string;
   academicYear?: string;
+  academicSessionId?: string;
   capacity?: number;
   classTeacherUserId?: string;
   assignedTeacherUserIds?: string[];
@@ -300,7 +338,7 @@ export interface CreateClassInput {
 }
 
 export type UpdateClassInput = Partial<
-  Omit<CreateClassInput, "source" | "templateKey" | "displayName" | "arm">
+  Omit<CreateClassInput, "schoolId" | "source" | "templateKey" | "displayName" | "arm">
 >;
 
 export interface ClassUsage {

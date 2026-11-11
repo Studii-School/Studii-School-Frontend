@@ -1,19 +1,27 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { ArrowLeft, BriefcaseBusiness, Download, Plus, Trash2, Upload, UserRoundCog } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { ArrowLeft, BookOpenCheck, BriefcaseBusiness, GraduationCap, Plus, Trash2, Upload, UserRoundCog } from "lucide-react";
 import Link from "@/features/navigation-progress/navigation-progress-link";
+import { PersonNameLink } from "@/features/people/person-name-link";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { CsvImportDialog } from "@/components/shared/csv-import-dialog";
+import { ProfileImageField } from "@/components/shared/profile-image-field";
 import { SearchInput } from "@/components/shared/search-input";
 import { Badge } from "@/components/ui/badge";
+import { ClickableTableRow } from "@/components/ui/clickable-table-row";
+import { Avatar } from "@/components/ui/avatar";
 import { Button, buttonStyles } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/number-input";
 import { MultiSelect, Select } from "@/components/ui/select";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { useAcademics } from "@/features/academics/academics-context";
 import type { StaffInput } from "@/features/academics/academics.types";
+import { downloadCsvFile } from "@/lib/csv-download";
+import { STAFF_IMPORT_TEMPLATE, STAFF_IMPORT_TEMPLATE_FILENAME } from "@/lib/import-templates";
 
 const commonRoles = [
   "Teacher",
@@ -42,15 +50,6 @@ const blankStaff: StaffInput = {
   subjectIds: [],
 };
 
-function download(filename: string, content: string) {
-  const url = URL.createObjectURL(new Blob([content], { type: "text/csv" }));
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
 function parseCsv(text: string) {
   const rows = text.split(/\r?\n/).filter((line) => line.trim());
   const headers = rows.shift()?.split(",").map((item) => item.trim().toLowerCase()) ?? [];
@@ -71,9 +70,11 @@ export function StaffHrScreen() {
   const [query, setQuery] = useState("");
   const [role, setRole] = useState("");
   const [status, setStatus] = useState("");
-  const [selectedGroup, setSelectedGroup] = useState<"ALL" | "TEACHING" | "OTHER" | "SUSPENDED" | "">("");
+  const [selectedGroup, setSelectedGroup] = useState<"ALL" | "TEACHING" | "NON_TEACHING" | "SUSPENDED" | "">("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const classOptions = state.classes
     .filter((item) => item.status === "ACTIVE")
@@ -97,7 +98,7 @@ export function StaffHrScreen() {
         !selectedGroup ||
         selectedGroup === "ALL" ||
         (selectedGroup === "TEACHING" && item.isTeachingStaff) ||
-        (selectedGroup === "OTHER" && !item.isTeachingStaff) ||
+        (selectedGroup === "NON_TEACHING" && !item.isTeachingStaff) ||
         (selectedGroup === "SUSPENDED" && item.status === "SUSPENDED");
       return groupMatch && (!normalized || haystack.includes(normalized)) && (!role || item.jobTitle === role) && (!status || item.status === status);
     });
@@ -153,6 +154,7 @@ export function StaffHrScreen() {
           assignedClassIds: isTeachingStaff ? assignedClassIds : [],
           classTeacherClassIds: [],
           subjectIds: isTeachingStaff ? subjectIds : [],
+          photoUrl: get("photourl") || get("imageurl") || undefined,
         });
         existingEmails.add(emailKey);
         if (staffIdKey) existingStaffIds.add(staffIdKey);
@@ -207,8 +209,8 @@ export function StaffHrScreen() {
   const nonTeachingCount = state.staff.length - teachingCount;
   const groupCards = [
     { label: "All staff", value: "ALL" as const, count: state.staff.length, description: "Complete school workforce" },
-    { label: "Teaching staff", value: "TEACHING" as const, count: teachingCount, description: "Teachers and classroom staff" },
-    { label: "Other workers", value: "OTHER" as const, count: nonTeachingCount, description: "Operations and support roles" },
+    { label: "Teaching staff", value: "TEACHING" as const, count: teachingCount, description: "Teachers, class teachers and subject handlers" },
+    { label: "Non-teaching staff", value: "NON_TEACHING" as const, count: nonTeachingCount, description: "Admin, finance, operations and support teams" },
     { label: "Suspended", value: "SUSPENDED" as const, count: state.staff.filter((item) => item.status === "SUSPENDED").length, description: "Accounts with paused access" },
   ];
 
@@ -216,8 +218,16 @@ export function StaffHrScreen() {
     <div className="w-full min-w-0">
       <PageHeader
         title="Staff & HR"
-        description="Manage teaching and non-teaching workers in one school directory."
-        action={<div className="flex flex-wrap gap-2"><input id="staff-import" className="sr-only" type="file" accept=".csv,text/csv" onChange={(event) => void importStaff(event.target.files?.[0]).finally(() => { event.target.value = ""; })}/><Button variant="outline" onClick={() => download("staff-import-template.csv", "name,email,jobTitle,staffId,salaryAmount,department,phone,isTeachingStaff,classes,subjects\nJane Teacher,jane@example.com,Teacher,TCH-001,250000,Academics,08000000000,yes,JSS1 Art,English|Literature")}><Download size={16} />Template</Button><Button variant="outline" onClick={() => document.getElementById("staff-import")?.click()}><Upload size={16} />Import Staff</Button><Button onClick={() => { setSelectedGroup("ALL"); setFormOpen(true); }}><Plus size={16} />Add Staff</Button></div>}
+        description="Manage teaching and non-teaching staff in one clear school directory."
+        action={<div className="flex flex-wrap gap-2"><input ref={importInputRef} className="sr-only" type="file" accept=".csv,text/csv" onChange={(event) => { setImportDialogOpen(false); void importStaff(event.target.files?.[0]).finally(() => { event.target.value = ""; }); }}/><Button variant="outline" onClick={() => setImportDialogOpen(true)}><Upload size={16} />Import Staff</Button><Link href="/admin/staff/add" className={buttonStyles()}><Plus size={16} />Add Staff</Link></div>}
+      />
+      <CsvImportDialog
+        open={importDialogOpen}
+        title="Import staff and teachers"
+        description="Download the staff CSV template, or select a completed CSV containing teaching or non-teaching staff."
+        onClose={() => setImportDialogOpen(false)}
+        onDownloadTemplate={() => downloadCsvFile(STAFF_IMPORT_TEMPLATE_FILENAME, STAFF_IMPORT_TEMPLATE)}
+        onUpload={() => importInputRef.current?.click()}
       />
 
       {!selectedGroup ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{groupCards.map((item)=><button key={item.value} type="button" onClick={()=>setSelectedGroup(item.value)} className="min-h-36 rounded-[8px] border bg-surface p-4 text-left transition hover:border-[var(--school-primary)] hover:shadow-sm"><BriefcaseBusiness size={20} className="text-[var(--school-primary)]" /><p className="mt-3 font-semibold">{item.label}</p><p className="mt-1 text-xs text-muted">{item.description}</p><p className="mt-4 text-2xl font-bold">{item.count}</p></button>)}</div> : <>
@@ -225,30 +235,47 @@ export function StaffHrScreen() {
 
       {formOpen && (
         <Card className="mb-5 p-5">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <h2 className="font-semibold">Add staff member</h2>
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">Add staff member</h2>
+              <p className="mt-1 text-sm text-muted">Start with identity and staff type. Teaching assignments only appear when they are needed.</p>
+            </div>
             <Link href="/admin/staff/assignments" className={buttonStyles("outline")}><UserRoundCog size={15} />Assign Classes</Link>
           </div>
           <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-3 sm:col-span-2 md:grid-cols-2">
+              <button type="button" onClick={() => { patch("isTeachingStaff", true); patch("jobTitle", form.jobTitle === "Staff" ? "Teacher" : form.jobTitle); }} className={`rounded-[8px] border p-4 text-left transition ${form.isTeachingStaff ? "border-[var(--school-primary)] bg-primary-light text-[var(--school-primary)]" : "bg-surface hover:bg-surface-muted"}`}>
+                <GraduationCap size={20} />
+                <p className="mt-3 font-semibold">Teaching staff</p>
+                <p className="mt-1 text-xs text-muted">Teacher, head teacher, class teacher or subject handler.</p>
+              </button>
+              <button type="button" onClick={() => { patch("isTeachingStaff", false); patch("jobTitle", form.jobTitle === "Teacher" ? "Staff" : form.jobTitle); }} className={`rounded-[8px] border p-4 text-left transition ${!form.isTeachingStaff ? "border-[var(--school-primary)] bg-primary-light text-[var(--school-primary)]" : "bg-surface hover:bg-surface-muted"}`}>
+                <BookOpenCheck size={20} />
+                <p className="mt-3 font-semibold">Non-teaching staff</p>
+                <p className="mt-1 text-xs text-muted">Admin, bursary, operations, health, security and support roles.</p>
+              </button>
+            </div>
             <label className="text-sm font-medium">Full name<Input className="mt-2" value={form.name} onChange={(event) => patch("name", event.target.value)} /></label>
             <label className="text-sm font-medium">Email<Input className="mt-2" type="email" value={form.email} onChange={(event) => patch("email", event.target.value)} /></label>
             <label className="text-sm font-medium">Staff ID<Input className="mt-2" value={form.employeeNumber ?? ""} onChange={(event) => patch("employeeNumber", event.target.value)} /></label>
-            {form.isTeachingStaff && <label className="text-sm font-medium">Monthly salary<Input className="mt-2" type="number" min="0" step="1" value={form.salaryAmount ?? ""} onChange={(event) => patch("salaryAmount", event.target.value ? Number(event.target.value) : undefined)} placeholder="250000" /></label>}
+            <label className="text-sm font-medium">Monthly salary<MoneyInput className="mt-2" min="0" value={form.salaryAmount ?? 0} onValueChange={(value) => patch("salaryAmount", value || undefined)} placeholder="250,000" /></label>
             <div className="sm:col-span-2 grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
               <label className="text-sm font-medium">Role<Select className="mt-2" searchable label="Role" value={form.jobTitle} onChange={(value) => patch("jobTitle", value)} options={roleOptions} /></label>
               <label className="text-sm font-medium">Custom role name<Input className="mt-2" value={form.jobTitle} onChange={(event) => patch("jobTitle", event.target.value)} placeholder="Cleaner, Gateman, Lab assistant..." /></label>
             </div>
             <label className="text-sm font-medium">Department<Input className="mt-2" value={form.department ?? ""} onChange={(event) => patch("department", event.target.value)} /></label>
             <label className="text-sm font-medium">Phone<Input className="mt-2" value={form.phone ?? ""} onChange={(event) => patch("phone", event.target.value)} /></label>
-            <label className="flex items-center gap-2 text-sm font-medium sm:col-span-2">
-              <input type="checkbox" checked={form.isTeachingStaff} onChange={(event) => patch("isTeachingStaff", event.target.checked)} />
-              Teaching staff
-            </label>
+            <div className="sm:col-span-2"><ProfileImageField value={form.photoUrl} onChange={(value) => patch("photoUrl", value)} name={form.name || "Staff member"} /></div>
             {form.isTeachingStaff && (
               <>
-                <div className="sm:col-span-2"><MultiSelect label="Assigned classes" values={form.assignedClassIds ?? []} onChange={(values) => patch("assignedClassIds", values)} options={classOptions} /></div>
-                <div className="sm:col-span-2"><MultiSelect label="Subjects taught" values={form.subjectIds ?? []} onChange={(values) => patch("subjectIds", values)} options={subjectOptions} /></div>
+                <div className="sm:col-span-2"><p className="mb-2 text-sm font-medium">Assigned classes</p><MultiSelect searchable label="Assigned classes" placeholder="Select classes" emptyMessage="No active classes found." values={form.assignedClassIds ?? []} onChange={(values) => patch("assignedClassIds", values)} options={classOptions} /></div>
+                <div className="sm:col-span-2"><p className="mb-2 text-sm font-medium">Subjects taught</p><MultiSelect searchable label="Subjects taught" placeholder="Select subjects" emptyMessage="No subjects found for the selected classes." values={form.subjectIds ?? []} onChange={(values) => patch("subjectIds", values)} options={subjectOptions} /></div>
               </>
+            )}
+            {!form.isTeachingStaff && (
+              <div className="rounded-[8px] border bg-surface-muted p-4 text-sm text-muted sm:col-span-2">
+                Non-teaching staff do not need class or subject access. You can still keep department, phone and salary details here.
+              </div>
             )}
             {error && <p className="text-sm text-danger sm:col-span-2">{error}</p>}
             <div className="flex justify-end gap-2 sm:col-span-2">
@@ -271,8 +298,8 @@ export function StaffHrScreen() {
             <thead className="bg-surface-muted text-xs uppercase text-muted"><tr>{["Staff", "Role", "Contact", "Classes", "Status", "Actions"].map((item) => <th className="px-4 py-3" key={item}>{item}</th>)}</tr></thead>
             <tbody className="divide-y">
               {rows.map((item) => (
-                <tr key={item.id}>
-                  <td className="px-4 py-3"><p className="font-semibold">{item.fullName}</p><p className="text-xs text-muted">{item.employeeNumber ?? item.id}</p></td>
+                <ClickableTableRow key={item.id} href={`/admin/staff/${item.userId}`} label={item.fullName}>
+                  <td className="px-4 py-3"><div className="flex items-center gap-3"><Avatar initials={`${item.firstName[0] ?? ""}${item.lastName[0] ?? ""}`} src={item.photoUrl} alt={`${item.fullName} profile`} /><div><p className="font-semibold"><PersonNameLink kind="staff" id={item.userId}>{item.fullName}</PersonNameLink></p><p className="text-xs text-muted">{item.employeeNumber ?? item.id}</p></div></div></td>
                   <td className="px-4 py-3"><p>{item.jobTitle}</p><p className="text-xs text-muted">{item.isTeachingStaff ? "Teaching staff" : item.department ?? "Non-teaching staff"}</p></td>
                   <td className="px-4 py-3"><p>{item.email}</p><p className="text-xs text-muted">{item.phone ?? "No phone"}</p></td>
                   <td className="px-4 py-3">{item.isTeachingStaff ? `${item.assignedClassIds.length} class(es), ${item.subjectIds.length} subject(s)` : "Not applicable"}</td>
@@ -285,7 +312,7 @@ export function StaffHrScreen() {
                       <button className="inline-flex items-center gap-1 font-semibold text-danger" onClick={() => deleteStaff(item)}><Trash2 size={14} />Delete</button>
                     </div>
                   </td>
-                </tr>
+                </ClickableTableRow>
               ))}
             </tbody>
           </table>

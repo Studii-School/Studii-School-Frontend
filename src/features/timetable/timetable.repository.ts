@@ -1,18 +1,26 @@
 import { academicsRepository } from "@/features/academics/academics.repository";
 import { apiRequest, readStoredToken } from "@/lib/api";
 import { getStoredTimetable, saveStoredTimetable } from "./timetable.storage";
+import { findTimetableConflict } from "./timetable-period-utils";
 import type { TimetableEntry, TimetableInput } from "./timetable.types";
 
 const uid = () => `timetable-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-function overlaps(a: TimetableInput, b: TimetableEntry) {
-  return a.classId === b.classId && a.day === b.day && a.startTime < b.endTime && a.endTime > b.startTime;
-}
+type TimetableListResponse = TimetableEntry[] | {
+  entries?: TimetableEntry[];
+  items?: TimetableEntry[];
+  results?: TimetableEntry[];
+  timetable?: TimetableEntry[];
+  data?: TimetableEntry[] | TimetableListResponse;
+};
 
-type TimetableListResponse = TimetableEntry[] | { entries?: TimetableEntry[]; data?: TimetableEntry[] };
-
-function listFromResponse(value: TimetableListResponse) {
-  return Array.isArray(value) ? value : value.entries ?? value.data ?? [];
+function listFromResponse(value: TimetableListResponse): TimetableEntry[] {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value.entries)) return value.entries;
+  if (Array.isArray(value.items)) return value.items;
+  if (Array.isArray(value.results)) return value.results;
+  if (Array.isArray(value.timetable)) return value.timetable;
+  return value.data ? listFromResponse(value.data) : [];
 }
 
 function hasBackendSession() {
@@ -26,7 +34,7 @@ export const timetableRepository = {
     }
     return getStoredTimetable();
   },
-  async save(teacherUserId: string, input: TimetableInput, entryId?: string) {
+  async save(teacherUserId: string, input: TimetableInput, entryId?: string, isCurrentPeriod = false) {
     if (!input.classId || !input.subjectId || !input.day || !input.startTime || !input.endTime) {
       throw new Error("Class, subject, day, start time and end time are required.");
     }
@@ -37,12 +45,12 @@ export const timetableRepository = {
     if (hasBackendSession()) {
       const response = await apiRequest<{ entry: TimetableEntry }>(entryId ? `/timetable/${entryId}` : "/timetable", {
         method: entryId ? "PATCH" : "POST",
-        body: JSON.stringify(input),
+        body: JSON.stringify({ ...input, sessionId: input.academicSessionId }),
       });
       return response.entry;
     }
     const entries = getStoredTimetable();
-    const conflict = entries.find((entry) => entry.id !== entryId && overlaps(input, entry));
+    const conflict = findTimetableConflict(entries, input, entryId, isCurrentPeriod);
     if (conflict) throw new Error("This class already has a timetable entry in that time range.");
     const now = new Date().toISOString();
     const existing = entryId ? entries.find((entry) => entry.id === entryId) : undefined;

@@ -10,7 +10,7 @@ import {
   type WidgetGridSize,
 } from "./dashboard-widget.types";
 
-export const DASHBOARD_LAYOUT_VERSION = 2;
+export const DASHBOARD_LAYOUT_VERSION = 3;
 export const DASHBOARD_SCHOOL_ID = defaultSchoolSettings.id;
 
 export const dashboardUsers: Record<PortalRole, string> = {

@@ -16,6 +16,7 @@ import type {
   StudentStatus,
   Subject,
   SubjectInput,
+  TeacherClassAssignment,
   TeacherClassAssignmentType,
   UpdateClassInput,
 } from "./academics.types";
@@ -31,6 +32,7 @@ export interface AcademicsContextValue {
   ): Promise<void>;
   createCustomClass(input: CreateClassInput): Promise<void>;
   updateClass(id: string, input: UpdateClassInput): Promise<void>;
+  setClassOwners(classId: string, classOwnerUserId: string, coOwnerUserIds: string[]): Promise<void>;
   duplicateClass(id: string, suffix?: string): Promise<void>;
   reorderClasses(ids: string[]): Promise<void>;
   setClassStatus(id: string, status: ClassStatus): Promise<void>;
@@ -44,9 +46,12 @@ export interface AcademicsContextValue {
     classIds: string[];
     assignmentType: TeacherClassAssignmentType;
     subjectIds: string[];
+    assignmentPolicy?: "CO" | "MAIN" | "REPLACE";
+    assignmentSnapshot?: TeacherClassAssignment[];
     subjectAssignments?: Array<{ classId: string; subjectIds: string[] }>;
   }): Promise<number>;
   createStaff(input: StaffInput): Promise<StaffMember>;
+  updateStaff(id: string, input: Partial<StaffInput>): Promise<StaffMember>;
   assignStaffClasses(staffId: string, input: { assignedClassIds: string[]; classTeacherClassIds: string[]; subjectIds?: string[] }): Promise<StaffMember>;
   setStaffStatus(staffId: string, status: "ACTIVE" | "SUSPENDED"): Promise<StaffMember>;
   removeStaff(staffId: string): Promise<void>;
@@ -54,12 +59,13 @@ export interface AcademicsContextValue {
   createSubjects(inputs: SubjectInput[]): Promise<Subject[]>;
   setSubjectStatus(id: string, status: Subject["status"]): Promise<Subject>;
   removeSubject(id: string): Promise<void>;
-  removeTeacherAssignment(id: string): Promise<void>;
+  removeTeacherAssignment(id: string, assignmentSnapshot?: TeacherClassAssignment[], period?: { academicSessionId?: string; termId?: string }): Promise<void>;
   createGuardian(input: Omit<Guardian, "id" | "schoolId" | "createdAt" | "updatedAt">): Promise<Guardian>;
+  updateGuardian(id: string, input: Partial<Omit<Guardian, "id" | "schoolId" | "createdAt" | "updatedAt">>): Promise<Guardian>;
   createStudent(input: StudentInput): Promise<Student>;
   updateStudent(id: string, input: Partial<StudentInput>): Promise<Student>;
   assignStudentParents(studentId: string, guardianIds: string[]): Promise<Student>;
-  moveStudentToClass(input: { studentId: string; classId: string; effectiveDate: string; reason: string }): Promise<Student>;
+  moveStudentToClass(input: { studentId: string; classId: string; effectiveDate: string; reason: string; academicSessionId?: string }): Promise<Student>;
   updateStudentStatus(id: string, status: StudentStatus): Promise<Student>;
   addStudentDocument(studentId: string, input: Omit<StudentDocument, "id" | "studentId" | "uploadedAt">): Promise<StudentDocument>;
   removeStudentDocument(id: string): Promise<void>;

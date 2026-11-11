@@ -4,6 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { LogOut, LockKeyhole } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { PortalShell } from "@/components/layout/portal-shell";
+import { FrequentPagesProvider } from "@/features/navigation-progress/frequent-pages-provider";
+import { useAcademicPeriod } from "@/features/academic-period/academic-period-context";
+import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
 import { Button } from "@/components/ui/button";
 import { AUTH_SESSION_EVENT, getProfile, getTokenExpiryMs, logout, readStoredToken, type AuthUser } from "@/lib/api";
 import { displayUser, readStoredUser, routeForRole } from "@/lib/auth";
@@ -26,6 +29,10 @@ export function AuthenticatedPortalShell({ children, navigation, fallbackUser, a
   const [profileUser, setProfileUser] = useState<AuthUser | null>(null);
   const user = useMemo(() => displayUser(profileUser ?? session.user, fallbackUser), [fallbackUser, profileUser, session.user]);
   const schoolId = resolveUserSchoolId(user);
+  const period = useAcademicPeriod();
+  const { settings } = useSchoolSettings();
+  const isAdmin = user.role === "Administrator";
+  const isHistoricalReadOnly = !period.scope.isCurrentPeriod && !(isAdmin && settings.historicalEditingEnabled);
   const [featureSettings, setFeatureSettings] = useState(() => normaliseFeatureSettings(user.features));
 
   useEffect(() => {
@@ -112,14 +119,58 @@ export function AuthenticatedPortalShell({ children, navigation, fallbackUser, a
   const canRender = session.ready && session.token && session.user && session.token !== "development-token" && allowedRoles.includes(user.role);
   const visibleNavigation = useMemo(() => user.role === "Super Administrator" ? navigation : filterNavigationByFeatures(navigation, featureSettings), [featureSettings, navigation, user.role]);
   const disabledFeature = user.role === "Super Administrator" ? null : disabledFeatureForPath(pathname, navigation, featureSettings);
+  const blockHistoricalWrite = isHistoricalReadOnly;
+  const preventHistoricalSubmit = (event: React.FormEvent<HTMLDivElement>) => {
+    if (!blockHistoricalWrite) return;
+    const target = event.target;
+    if (target instanceof HTMLFormElement) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+  const preventHistoricalFormChange = (event: React.ChangeEvent<HTMLDivElement>) => {
+    if (!blockHistoricalWrite || !(event.target instanceof Element) || !event.target.closest("form")) return;
+    if (event.target.closest("[data-historical-editing-toggle]")) return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  const preventHistoricalAction = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!blockHistoricalWrite || !(event.target instanceof Element)) return;
+    const action = event.target.closest("button, [role='button'], input[type='submit']");
+    if (!action) return;
+    const label = [
+      action.textContent,
+      action.getAttribute("aria-label"),
+      action.getAttribute("title"),
+      action.getAttribute("data-action"),
+    ].filter(Boolean).join(" ").toLowerCase();
+    const isFilterControl = /\b(filter|search)\b/.test(label) && !/\b(approve|archive|assign|correct|create|deactivate|delete|disable|edit|enable|import|lock|mark|move|pay|publish|record|reassign|reopen|restore|save|send|submit|suspend|unarchive|unpublish|update|upload)\b/.test(label);
+    if (!isFilterControl && /\b(activate|add|approve|archive|assign|correct|create|deactivate|delete|disable|edit|enable|import|lock|mark|move|pay|publish|record|reassign|remove|reopen|restore|save|send|submit|suspend|unarchive|unpublish|update|upload)\b/.test(label)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
 
   if (!canRender) return <div className="flex min-h-screen items-center justify-center text-sm text-muted">Loading portal...</div>;
 
   return (
-    <PortalShell navigation={visibleNavigation} user={user}>
-      {disabledFeature ? <FeatureUnavailable feature={disabledFeature} /> : children}
-      {user.status === "SUSPENDED" && <SuspendedAccount />}
-    </PortalShell>
+    <FrequentPagesProvider
+      userId={session.user?.id ?? session.user?.email}
+      schoolId={schoolId}
+      role={user.role}
+      navigation={visibleNavigation}
+    >
+      <PortalShell navigation={visibleNavigation} user={user} historicalReadOnly={isHistoricalReadOnly}>
+        <div
+          onClickCapture={preventHistoricalAction}
+          onChangeCapture={preventHistoricalFormChange}
+          onSubmitCapture={preventHistoricalSubmit}
+        >
+          {disabledFeature ? <FeatureUnavailable feature={disabledFeature} /> : children}
+        </div>
+        {user.status === "SUSPENDED" && <SuspendedAccount />}
+      </PortalShell>
+    </FrequentPagesProvider>
   );
 }
 

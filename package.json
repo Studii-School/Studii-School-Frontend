@@ -6,6 +6,7 @@
     "dev": "next dev -p 5173",
     "build": "next build",
     "start": "next start",
+    "test": "node --experimental-strip-types --test tests/academic-context.test.ts tests/academic-period-save.test.mjs",
     "lint": "eslint"
   },
   "dependencies": {

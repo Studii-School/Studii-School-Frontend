@@ -1,14 +1,16 @@
 import { apiRequest, readStoredToken } from "@/lib/api";
 import { readStoredJson, writeStoredJson } from "@/lib/storage";
 import { isUpcomingDate } from "@/lib/date-utils";
+import { fromBackendEventAudience, toBackendEventAudience, type BackendEventAudience } from "./events-audience";
 import type { PortalAudience, SchoolEvent, SchoolEventInput } from "./events.types";
-const STORAGE_KEY = "schoolos.events.v1";
+export const EVENTS_STORAGE_KEY = "schoolos.events.v1";
+const STORAGE_KEY = EVENTS_STORAGE_KEY;
 const load = () => readStoredJson<SchoolEvent[]>(STORAGE_KEY, []);
 const store = (events: SchoolEvent[]) => { writeStoredJson(STORAGE_KEY, events); return events; };
 const hasSession = () => Boolean(readStoredToken());
-type BackendEvent = Partial<SchoolEvent> & { selectedClassIds?: string[]; audiences?: SchoolEvent["audience"] };
+type BackendEvent = Partial<Omit<SchoolEvent, "audience">> & { sessionId?: string; selectedClassIds?: string[]; audience?: BackendEventAudience[]; audiences?: BackendEventAudience[] };
 type BackendEventResponse = BackendEvent | { data?: BackendEvent; item?: BackendEvent; event?: BackendEvent };
-type BackendEventPayload = Partial<Pick<SchoolEventInput, "title" | "shortDescription" | "description" | "category" | "startDate" | "startTime" | "endDate" | "endTime" | "location" | "audience" | "selectedClasses" | "color" | "isFeatured" | "isPublished">>;
+type BackendEventPayload = Partial<Omit<Pick<SchoolEventInput, "title" | "shortDescription" | "description" | "category" | "startDate" | "startTime" | "endDate" | "endTime" | "location" | "audience" | "selectedClasses" | "color" | "termId" | "isFeatured" | "isPublished">, "audience">> & { sessionId?: string; audience?: BackendEventAudience[] };
 function unwrapList<T>(value: T[] | { data?: T[]; items?: T[]; results?: T[]; events?: T[] }) { return Array.isArray(value) ? value : value.data ?? value.items ?? value.results ?? value.events ?? []; }
 function unwrapEvent(value: BackendEventResponse): BackendEvent { const wrapped = value as { data?: BackendEvent; item?: BackendEvent; event?: BackendEvent }; return wrapped.event ?? wrapped.data ?? wrapped.item ?? value as BackendEvent; }
 function optionalString(value?: string) { const trimmed = value?.trim(); return trimmed ? trimmed : undefined; }
@@ -21,14 +23,16 @@ function mapEvent(item: BackendEvent): SchoolEvent {
     shortDescription: item.shortDescription ?? item.description ?? "",
     description: item.description,
     category: item.category ?? "General",
-    startDate: item.startDate ?? now.slice(0, 10),
+    startDate: item.startDate?.slice(0, 10) ?? now.slice(0, 10),
     startTime: item.startTime,
-    endDate: item.endDate,
+    endDate: item.endDate?.slice(0, 10),
     endTime: item.endTime,
     location: item.location,
-    audience: item.audience ?? item.audiences ?? ["Everyone"],
+    audience: fromBackendEventAudience(item.audience ?? item.audiences ?? ["Everyone"]),
     selectedClasses: item.selectedClasses ?? item.selectedClassIds ?? [],
     color: item.color,
+    academicSessionId: item.academicSessionId ?? item.sessionId,
+    termId: item.termId,
     isFeatured: item.isFeatured ?? false,
     isPublished: item.isPublished ?? false,
     createdAt: item.createdAt ?? now,
@@ -47,20 +51,25 @@ function eventBody(input: Partial<SchoolEventInput>): BackendEventPayload {
     endTime: optionalString(input.endTime),
     location: optionalString(input.location),
     color: optionalString(input.color),
+    sessionId: optionalString(input.academicSessionId),
+    termId: optionalString(input.termId),
     isFeatured: input.isFeatured,
     isPublished: input.isPublished,
   };
   if (input.audience) {
-    body.audience = input.audience;
+    body.audience = toBackendEventAudience(input.audience);
     body.selectedClasses = input.audience.includes("Selected Classes") ? input.selectedClasses ?? [] : [];
   } else if (input.selectedClasses) {
     body.selectedClasses = input.selectedClasses;
   }
   return body;
 }
-export async function getEvents(): Promise<SchoolEvent[]> {
+export async function getEvents(context?: { academicSessionId?: string; termId?: string }): Promise<SchoolEvent[]> {
   if (!hasSession()) return load();
-  const data = await apiRequest<BackendEvent[] | { data?: BackendEvent[]; items?: BackendEvent[]; results?: BackendEvent[]; events?: BackendEvent[] }>("/events");
+  const query = context?.academicSessionId && context.termId
+    ? `?sessionId=${encodeURIComponent(context.academicSessionId)}&termId=${encodeURIComponent(context.termId)}`
+    : "";
+  const data = await apiRequest<BackendEvent[] | { data?: BackendEvent[]; items?: BackendEvent[]; results?: BackendEvent[]; events?: BackendEvent[] }>(`/events${query}`);
   return unwrapList(data).map(mapEvent);
 }
 export async function createEvent(input: SchoolEventInput): Promise<SchoolEvent> {

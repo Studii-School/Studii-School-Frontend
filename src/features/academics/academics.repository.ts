@@ -1,11 +1,14 @@
 import type { ConfiguredSchoolLevel } from "@/types/school-settings";
 import { apiRequest, readStoredToken } from "@/lib/api";
+import { isUuid } from "@/features/academic-period/academic-period.repository";
+import { matchingClassForAcademicSession } from "@/features/academic-period/academic-context";
 import { getAssignmentsState } from "@/features/assignments/assignments.storage";
 import { getStoredAttendance } from "@/features/attendance/attendance.storage";
 import { getFinanceState } from "@/features/finance/finance.storage";
 import {
   classTemplates,
   getClassTemplate,
+  inferTemplate,
 } from "./academics.class-templates";
 import { getClassOptions, sortClasses } from "./academics.class-utils";
 import {
@@ -30,6 +33,7 @@ import type {
   StaffMember,
   Student,
   StudentDocument,
+  StudentEnrollment,
   StudentInput,
   StudentStatus,
   Subject,
@@ -61,6 +65,7 @@ export interface AcademicsRepository {
   ): Promise<SchoolClass>;
   createCustomClass(input: CreateClassInput): Promise<SchoolClass>;
   updateClass(id: string, input: UpdateClassInput): Promise<SchoolClass>;
+  setClassOwners(classId: string, classOwnerUserId: string, coOwnerUserIds: string[]): Promise<void>;
   duplicateClass(id: string, suffix?: string): Promise<SchoolClass>;
   reorderClasses(classIds: string[]): Promise<void>;
   setClassStatus(id: string, status: ClassStatus): Promise<void>;
@@ -69,15 +74,22 @@ export interface AcademicsRepository {
   getClassUsage(id: string): Promise<ClassUsage>;
   seedDefaultClassTemplates(levels: ConfiguredSchoolLevel[]): Promise<void>;
   setSchoolLevels(levels: ConfiguredSchoolLevel[]): Promise<void>;
-  moveStudents(studentIds: string[], classId: string): Promise<void>;
+  ensureSessionEnrollments(context: EnrollmentContext, carryForwardStudents: boolean): Promise<void>;
+  moveStudents(studentIds: string[], classId: string, context: EnrollmentContext): Promise<void>;
   saveTeacherAssignments(input: {
     teacherUserId: string;
     classIds: string[];
     assignmentType: TeacherClassAssignmentType;
     subjectIds: string[];
+    assignmentPolicy?: "CO" | "MAIN" | "REPLACE";
+    assignmentSnapshot?: TeacherClassAssignment[];
     subjectAssignments?: Array<{ classId: string; subjectIds: string[] }>;
+    schoolId?: string;
+    academicSessionId?: string;
+    termId?: string;
   }): Promise<TeacherClassAssignment[]>;
   createStaff(input: StaffInput): Promise<StaffMember>;
+  updateStaff(id: string, input: Partial<StaffInput>): Promise<StaffMember>;
   assignStaffClasses(staffId: string, input: { assignedClassIds: string[]; classTeacherClassIds: string[]; subjectIds?: string[] }): Promise<StaffMember>;
   setStaffStatus(staffId: string, status: "ACTIVE" | "SUSPENDED"): Promise<StaffMember>;
   removeStaff(staffId: string): Promise<void>;
@@ -85,12 +97,13 @@ export interface AcademicsRepository {
   createSubjects(inputs: SubjectInput[]): Promise<Subject[]>;
   setSubjectStatus(id: string, status: Subject["status"]): Promise<Subject>;
   removeSubject(id: string): Promise<void>;
-  removeTeacherAssignment(id: string): Promise<void>;
+  removeTeacherAssignment(id: string, assignmentSnapshot?: TeacherClassAssignment[], period?: { academicSessionId?: string; termId?: string }): Promise<void>;
   createGuardian(input: Omit<Guardian, "id" | "schoolId" | "createdAt" | "updatedAt">): Promise<Guardian>;
-  createStudent(input: StudentInput): Promise<Student>;
+  updateGuardian(id: string, input: Partial<Omit<Guardian, "id" | "schoolId" | "createdAt" | "updatedAt">>): Promise<Guardian>;
+  createStudent(input: StudentInput, context: EnrollmentContext): Promise<Student>;
   updateStudent(id: string, input: Partial<StudentInput>): Promise<Student>;
   assignStudentParents(studentId: string, guardianIds: string[]): Promise<Student>;
-  moveStudentToClass(input: { studentId: string; classId: string; effectiveDate: string; reason: string }): Promise<Student>;
+  moveStudentToClass(input: { studentId: string; classId: string; effectiveDate: string; reason: string }, context: EnrollmentContext): Promise<Student>;
   updateStudentStatus(id: string, status: StudentStatus): Promise<Student>;
   addStudentDocument(studentId: string, input: Omit<StudentDocument, "id" | "studentId" | "uploadedAt">): Promise<StudentDocument>;
   removeStudentDocument(id: string): Promise<void>;
@@ -134,6 +147,7 @@ function staffToTeacher(item: StaffMember): Teacher | null {
     department: item.department,
     phone: item.phone,
     email: item.email,
+    photoUrl: item.photoUrl,
     subjectIds: item.subjectIds,
     status: item.status === "ACTIVE" ? "ACTIVE" : "INACTIVE",
     createdAt: item.createdAt,
@@ -142,6 +156,44 @@ function staffToTeacher(item: StaffMember): Teacher | null {
 }
 
 export class LocalAcademicsRepository implements AcademicsRepository {
+  async ensureSessionEnrollments(context: EnrollmentContext, carryForwardStudents: boolean) {
+    if (!context.schoolId || !context.academicSessionId || !carryForwardStudents) return;
+    const state = await this.getState();
+    const now = new Date().toISOString();
+    let changed = false;
+    const targetClasses = state.classes.filter((item) => {
+      if (item.schoolId !== context.schoolId || item.status !== "ACTIVE") return false;
+      if (item.academicSessionId) return item.academicSessionId === context.academicSessionId;
+      if (item.academicYear?.trim() && context.academicSessionName) {
+        return item.academicYear.trim().toLowerCase() === context.academicSessionName.trim().toLowerCase();
+      }
+      return true;
+    });
+    for (const student of state.students) {
+      if (student.schoolId !== context.schoolId || student.status !== "ACTIVE") continue;
+      const existingEnrollment = state.studentEnrollments.find((item) => item.studentId === student.id && item.academicSessionId === context.academicSessionId);
+      if (existingEnrollment && (existingEnrollment.status !== "ACTIVE" || existingEnrollment.classId)) continue;
+      const previousEnrollment = context.previousAcademicSessionId
+        ? state.studentEnrollments.find((item) => item.studentId === student.id && item.academicSessionId === context.previousAcademicSessionId && item.status === "ACTIVE")
+        : undefined;
+      const sourceClassId = previousEnrollment?.classId || student.classId;
+      const sourceClass = sourceClassId
+        ? state.classes.find((item) => item.id === sourceClassId && item.schoolId === context.schoolId)
+        : undefined;
+      const classId = sourceClass
+        ? matchingClassForAcademicSession(sourceClass, targetClasses)?.id ?? sourceClass.id
+        : "";
+      if (existingEnrollment) Object.assign(existingEnrollment, { classId, updatedAt: now });
+      else state.studentEnrollments.push({
+        id: createId("enrollment"), schoolId: context.schoolId, studentId: student.id,
+        academicSessionId: context.academicSessionId, classId,
+        status: "ACTIVE", createdAt: now, updatedAt: now,
+      });
+      changed = true;
+    }
+    if (changed) await saveAcademicsState(state);
+  }
+
   async getState() {
     return getAcademicsState();
   }
@@ -171,12 +223,12 @@ export class LocalAcademicsRepository implements AcademicsRepository {
   async createClass(input: CreateClassInput) {
     const state = await this.getState();
     const normalized = normalizeClassInput(input);
-    assertUniqueClassName(state.classes, normalized.displayName);
+    assertUniqueClassName(state.classes.filter((item) => item.academicSessionId === normalized.academicSessionId), normalized.displayName);
     const now = new Date().toISOString();
     const created: SchoolClass = {
       ...normalized,
       id: createId("class"),
-      schoolId: "school-001",
+      schoolId: normalized.schoolId ?? "school-001",
       arm: normalized.suffix,
       sortOrder:
         getClassTemplate(normalized.templateKey)?.defaultSortOrder ??
@@ -208,6 +260,9 @@ export class LocalAcademicsRepository implements AcademicsRepository {
       capacity: input.capacity ?? 40,
       classTeacherUserId: input.classTeacherUserId,
       assignedTeacherUserIds: input.assignedTeacherUserIds,
+      schoolId: input.schoolId,
+      academicYear: input.academicYear,
+      academicSessionId: input.academicSessionId,
       status: input.status ?? "ACTIVE",
     });
   }
@@ -246,6 +301,9 @@ export class LocalAcademicsRepository implements AcademicsRepository {
       suffix,
       capacity: source.capacity,
       assignedTeacherUserIds: [],
+      schoolId: source.schoolId,
+      academicYear: source.academicYear,
+      academicSessionId: source.academicSessionId,
       status: "ACTIVE",
     });
   }
@@ -268,6 +326,33 @@ export class LocalAcademicsRepository implements AcademicsRepository {
       sortOrder: order.get(item.id) ?? item.sortOrder,
       updatedAt: new Date().toISOString(),
     }));
+    await saveAcademicsState(state);
+  }
+
+  async setClassOwners(classId: string, classOwnerUserId: string, coOwnerUserIds: string[]) {
+    const state = await this.getState();
+    const schoolClass = state.classes.find((item) => item.id === classId);
+    if (!schoolClass) throw new Error("Class not found.");
+    const uniqueCoOwners = [...new Set(coOwnerUserIds)].filter((id) => id !== classOwnerUserId);
+    schoolClass.classTeacherUserId = classOwnerUserId;
+    schoolClass.classTeacherId = classOwnerUserId;
+    schoolClass.classOwnerAssignments = [
+      { userId: classOwnerUserId, assignmentRole: "MAIN" },
+      ...uniqueCoOwners.map((userId) => ({ userId, assignmentRole: "CO" as const })),
+    ];
+    schoolClass.assignedTeacherUserIds = [...new Set([...schoolClass.assignedTeacherUserIds, classOwnerUserId, ...uniqueCoOwners])];
+    state.teacherAssignments = state.teacherAssignments.filter((item) => item.classId !== classId || item.assignmentType !== "CLASS_TEACHER");
+    const ownerAssignments: Array<[string, "MAIN" | "CO"]> = [
+      [classOwnerUserId, "MAIN"],
+      ...uniqueCoOwners.map((id): [string, "MAIN" | "CO"] => [id, "CO"]),
+    ];
+    for (const [userId, assignmentRole] of ownerAssignments) {
+      state.teacherAssignments.push({
+        id: `owner-${classId}-${userId}`, schoolId: schoolClass.schoolId, teacherUserId: userId,
+        classId, assignmentType: "CLASS_TEACHER", assignmentRole, subjectIds: [],
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      });
+    }
     await saveAcademicsState(state);
   }
 
@@ -359,23 +444,28 @@ export class LocalAcademicsRepository implements AcademicsRepository {
     await saveAcademicsState(state);
   }
 
-  async moveStudents(studentIds: string[], classId: string) {
+  async moveStudents(studentIds: string[], classId: string, context: EnrollmentContext) {
     const state = await this.getState();
     const target = state.classes.find(
       (item) => item.id === classId && item.status === "ACTIVE",
     );
     if (!target) throw new Error("Select an active destination class.");
+    if (!context.academicSessionId || target.schoolId !== context.schoolId) throw new Error("Invalid academic session or school.");
+    const now = new Date().toISOString();
     for (const student of state.students.filter((item) =>
       studentIds.includes(item.id),
     )) {
-      student.classId = classId;
+      if (student.schoolId !== context.schoolId) throw new Error("Student does not belong to this school.");
       student.schoolLevel = target.level;
-      student.updatedAt = new Date().toISOString();
+      student.updatedAt = now;
+      const enrollment = state.studentEnrollments.find((item) => item.studentId === student.id && item.academicSessionId === context.academicSessionId);
+      if (enrollment) Object.assign(enrollment, { classId, status: "ACTIVE", updatedAt: now });
+      else state.studentEnrollments.push({ id: createId("enrollment"), schoolId: context.schoolId, studentId: student.id, academicSessionId: context.academicSessionId, classId, status: "ACTIVE", createdAt: now, updatedAt: now });
     }
     for (const item of state.classes) {
-      item.studentIds = state.students
-        .filter((student) => student.classId === item.id)
-        .map((student) => student.id);
+      item.studentIds = state.studentEnrollments
+        .filter((entry) => entry.academicSessionId === context.academicSessionId && entry.classId === item.id && entry.status === "ACTIVE")
+        .map((entry) => entry.studentId);
     }
     await saveAcademicsState(state);
   }
@@ -404,7 +494,19 @@ export class LocalAcademicsRepository implements AcademicsRepository {
     return guardian;
   }
 
-  async createStudent(input: StudentInput) {
+  async updateGuardian(
+    id: string,
+    input: Partial<Omit<Guardian, "id" | "schoolId" | "createdAt" | "updatedAt">>,
+  ) {
+    const state = await this.getState();
+    const guardian = state.guardians.find((item) => item.id === id);
+    if (!guardian) throw new Error("Parent not found.");
+    Object.assign(guardian, input, { updatedAt: new Date().toISOString() });
+    await saveAcademicsState(state);
+    return guardian;
+  }
+
+  async createStudent(input: StudentInput, context: EnrollmentContext) {
     const state = await this.getState();
     const admissionNumber = input.admissionNumber.trim() || generateAdmissionNumber(state.students);
     if (!input.firstName.trim() || !input.lastName.trim()) {
@@ -427,6 +529,7 @@ export class LocalAcademicsRepository implements AcademicsRepository {
     if (!schoolClass) {
       throw new Error("Select a valid active class for this school type.");
     }
+    if (!context.academicSessionId || schoolClass.schoolId !== context.schoolId) throw new Error("Invalid academic session or school.");
     const now = new Date().toISOString();
     const created: Student = {
       ...input,
@@ -435,11 +538,12 @@ export class LocalAcademicsRepository implements AcademicsRepository {
       middleName: input.middleName?.trim() || undefined,
       lastName: input.lastName.trim(),
       id: createId("student"),
-      schoolId: "school-001",
+      schoolId: context.schoolId,
       createdAt: now,
       updatedAt: now,
     };
     state.students.push(created);
+    state.studentEnrollments.push({ id: createId("enrollment"), schoolId: context.schoolId, studentId: created.id, academicSessionId: context.academicSessionId, classId: schoolClass.id, status: "ACTIVE", createdAt: now, updatedAt: now });
     schoolClass.studentIds = [...new Set([...schoolClass.studentIds, created.id])];
     state.studentActivities.unshift({
       id: createId("activity"),
@@ -515,7 +619,7 @@ export class LocalAcademicsRepository implements AcademicsRepository {
     classId: string;
     effectiveDate: string;
     reason: string;
-  }) {
+  }, context: EnrollmentContext) {
     if (!input.reason.trim()) throw new Error("Enter a reason for the move.");
     const state = await this.getState();
     const student = state.students.find((item) => item.id === input.studentId);
@@ -523,16 +627,19 @@ export class LocalAcademicsRepository implements AcademicsRepository {
       (item) => item.id === input.classId && item.status === "ACTIVE",
     );
     if (!student || !target) throw new Error("Student or destination class not found.");
-    const previousClassId = student.classId;
-    student.classId = target.id;
+    if (!context.academicSessionId || student.schoolId !== context.schoolId || target.schoolId !== context.schoolId) throw new Error("Invalid academic session or school.");
+    const enrollment = state.studentEnrollments.find((item) => item.studentId === student.id && item.academicSessionId === context.academicSessionId);
+    const previousClassId = enrollment?.classId;
     student.schoolLevel = target.level;
     student.updatedAt = new Date().toISOString();
-    for (const schoolClass of state.classes) {
-      schoolClass.studentIds = state.students
-        .filter((item) => item.classId === schoolClass.id)
-        .map((item) => item.id);
-    }
     const now = new Date().toISOString();
+    if (enrollment) Object.assign(enrollment, { classId: target.id, status: "ACTIVE", updatedAt: now });
+    else state.studentEnrollments.push({ id: createId("enrollment"), schoolId: context.schoolId, studentId: student.id, academicSessionId: context.academicSessionId, classId: target.id, status: "ACTIVE", createdAt: now, updatedAt: now });
+    for (const schoolClass of state.classes) {
+      schoolClass.studentIds = state.studentEnrollments
+        .filter((item) => item.academicSessionId === context.academicSessionId && item.classId === schoolClass.id && item.status === "ACTIVE")
+        .map((item) => item.studentId);
+    }
     state.studentClassHistory.unshift({
       id: createId("class-history"),
       studentId: student.id,
@@ -602,7 +709,12 @@ export class LocalAcademicsRepository implements AcademicsRepository {
     classIds: string[];
     assignmentType: TeacherClassAssignmentType;
     subjectIds: string[];
+    assignmentPolicy?: "CO" | "MAIN" | "REPLACE";
+    assignmentSnapshot?: TeacherClassAssignment[];
     subjectAssignments?: Array<{ classId: string; subjectIds: string[] }>;
+    schoolId?: string;
+    academicSessionId?: string;
+    termId?: string;
   }) {
     if (!input.teacherUserId || !input.classIds.length) {
       throw new Error("Select a teacher and at least one class.");
@@ -617,16 +729,58 @@ export class LocalAcademicsRepository implements AcademicsRepository {
     const now = new Date().toISOString();
     const created: TeacherClassAssignment[] = [];
     for (const classId of input.classIds) {
+      for (const snapshot of input.assignmentSnapshot ?? []) {
+        if (snapshot.classId !== classId || snapshot.isRemoved) continue;
+        const exists = state.teacherAssignments.some((item) =>
+          item.teacherUserId === snapshot.teacherUserId && item.classId === classId &&
+          item.assignmentType === snapshot.assignmentType && item.subjectIds.join(",") === snapshot.subjectIds.join(",") &&
+          item.academicSessionId === input.academicSessionId && item.termId === input.termId,
+        );
+        if (!exists) state.teacherAssignments.push({
+          ...snapshot,
+          id: createId("tca"),
+          classId,
+          className: state.classes.find((item) => item.id === classId)?.displayName ?? snapshot.className,
+          academicSessionId: input.academicSessionId,
+          termId: input.termId,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      const scopedExisting = state.teacherAssignments.filter((item) =>
+        item.classId === classId &&
+        item.teacherUserId !== input.teacherUserId &&
+        item.academicSessionId === input.academicSessionId &&
+        item.termId === input.termId,
+      );
+      const conflicting = scopedExisting.filter((item) =>
+        (input.assignmentType === "CLASS_TEACHER" && item.assignmentType === "CLASS_TEACHER") ||
+        (item.assignmentType === "SUBJECT_TEACHER" && item.subjectIds.some((subjectId) => input.subjectIds.includes(subjectId))),
+      );
+      const policy = input.assignmentPolicy ?? (conflicting.length ? "CO" : "MAIN");
+      if (policy === "REPLACE") {
+        const replacedIds = new Set(conflicting.map((item) => item.id));
+        state.teacherAssignments = state.teacherAssignments.filter((item) => !replacedIds.has(item.id));
+      } else {
+        for (const assignment of conflicting) {
+          if (policy === "MAIN") assignment.assignmentRole = "CO";
+          else if (!assignment.assignmentRole) assignment.assignmentRole = "MAIN";
+        }
+      }
       state.teacherAssignments = state.teacherAssignments.filter(
-        (item) => !(item.teacherUserId === input.teacherUserId && item.classId === classId),
+        (item) => !(item.teacherUserId === input.teacherUserId && item.classId === classId && item.academicSessionId === input.academicSessionId && item.termId === input.termId),
       );
       if (input.assignmentType === "CLASS_TEACHER" || !input.subjectIds.length) {
         const assignment: TeacherClassAssignment = {
           id: createId("tca"),
-          schoolId: "school-001",
+          schoolId: input.schoolId ?? "school-001",
           teacherUserId: input.teacherUserId,
           classId,
+          className: state.classes.find((item) => item.id === classId)?.displayName,
+          academicSessionId: input.academicSessionId,
+          termId: input.termId,
           assignmentType: input.assignmentType === "CLASS_TEACHER" ? "CLASS_TEACHER" : "GENERAL_ACCESS",
+          assignmentRole: policy === "CO" && conflicting.some((item) => item.assignmentType === "CLASS_TEACHER") ? "CO" : "MAIN",
           subjectIds: [],
           createdAt: now,
           updatedAt: now,
@@ -637,10 +791,14 @@ export class LocalAcademicsRepository implements AcademicsRepository {
       for (const subjectId of input.subjectIds) {
         const assignment: TeacherClassAssignment = {
           id: createId("tca"),
-          schoolId: "school-001",
+          schoolId: input.schoolId ?? "school-001",
           teacherUserId: input.teacherUserId,
           classId,
+          className: state.classes.find((item) => item.id === classId)?.displayName,
+          academicSessionId: input.academicSessionId,
+          termId: input.termId,
           assignmentType: "SUBJECT_TEACHER",
+          assignmentRole: policy === "CO" && conflicting.some((item) => item.assignmentType === "SUBJECT_TEACHER" && item.subjectIds.includes(subjectId)) ? "CO" : "MAIN",
           subjectIds: [subjectId],
           createdAt: now,
           updatedAt: now,
@@ -656,7 +814,7 @@ export class LocalAcademicsRepository implements AcademicsRepository {
             input.teacherUserId,
           ]),
         ];
-        if (input.assignmentType === "CLASS_TEACHER") {
+        if (input.assignmentType === "CLASS_TEACHER" && policy !== "CO") {
           schoolClass.classTeacherUserId = input.teacherUserId;
         }
       }
@@ -700,10 +858,15 @@ export class LocalAcademicsRepository implements AcademicsRepository {
       fullName,
       email: input.email.trim().toLowerCase(),
       phone: input.phone?.trim() || undefined,
+      salaryAmount: input.salaryAmount,
+      photoUrl: input.photoUrl?.trim() || undefined,
       role: input.isTeachingStaff ? "TEACHER" : "STAFF",
       jobTitle: input.jobTitle.trim(),
       department: input.department?.trim() || undefined,
       isTeachingStaff: input.isTeachingStaff,
+      gender: input.gender,
+      dateOfBirth: input.dateOfBirth || undefined,
+      address: input.address?.trim() || undefined,
       assignedClassIds: input.isTeachingStaff ? input.assignedClassIds ?? [] : [],
       classTeacherClassIds: input.isTeachingStaff ? input.classTeacherClassIds ?? [] : [],
       subjectIds: input.isTeachingStaff ? input.subjectIds ?? [] : [],
@@ -721,12 +884,82 @@ export class LocalAcademicsRepository implements AcademicsRepository {
     return staff;
   }
 
+  async updateStaff(id: string, input: Partial<StaffInput>) {
+    const state = await this.getState();
+    const staff = state.staff.find((item) => item.id === id || item.userId === id);
+    if (!staff) throw new Error("Staff member not found.");
+    if (input.name !== undefined) {
+      const fullName = input.name.trim().replace(/\s+/g, " ");
+      if (!fullName) throw new Error("Name is required.");
+      const names = splitName(fullName);
+      staff.fullName = fullName;
+      staff.firstName = names.firstName;
+      staff.lastName = names.lastName;
+    }
+    if (input.email !== undefined) {
+      const email = input.email.trim().toLowerCase();
+      if (
+        state.staff.some(
+          (item) => item.id !== staff.id && item.email.toLowerCase() === email,
+        )
+      ) {
+        throw new Error("A staff member already uses this email address.");
+      }
+      staff.email = email;
+    }
+    if (input.jobTitle !== undefined) staff.jobTitle = input.jobTitle.trim();
+    if (input.employeeNumber !== undefined) {
+      staff.employeeNumber = input.employeeNumber.trim() || undefined;
+      staff.staffId = staff.employeeNumber;
+    }
+    if (input.phone !== undefined) staff.phone = input.phone.trim() || undefined;
+    if (input.department !== undefined) staff.department = input.department.trim() || undefined;
+    if (input.salaryAmount !== undefined) staff.salaryAmount = input.salaryAmount;
+    if (input.gender !== undefined) staff.gender = input.gender;
+    if (input.dateOfBirth !== undefined) staff.dateOfBirth = input.dateOfBirth || undefined;
+    if (input.address !== undefined) staff.address = input.address.trim() || undefined;
+    if (input.photoUrl !== undefined) staff.photoUrl = input.photoUrl.trim() || undefined;
+    if (input.isTeachingStaff !== undefined) {
+      staff.isTeachingStaff = input.isTeachingStaff;
+      staff.role = input.isTeachingStaff ? "TEACHER" : "STAFF";
+    }
+    if (staff.isTeachingStaff) {
+      if (input.assignedClassIds !== undefined) staff.assignedClassIds = input.assignedClassIds;
+      if (input.classTeacherClassIds !== undefined) staff.classTeacherClassIds = input.classTeacherClassIds;
+      if (input.subjectIds !== undefined) staff.subjectIds = input.subjectIds;
+      await this.applyLocalStaffAssignments(state, staff);
+    } else {
+      staff.assignedClassIds = [];
+      staff.classTeacherClassIds = [];
+      staff.subjectIds = [];
+      state.teacherAssignments = state.teacherAssignments.filter((item) => item.teacherUserId !== staff.userId);
+      state.classes = state.classes.map((item) => ({
+        ...item,
+        classTeacherUserId: item.classTeacherUserId === staff.userId ? undefined : item.classTeacherUserId,
+        assignedTeacherUserIds: item.assignedTeacherUserIds.filter((teacherUserId) => teacherUserId !== staff.userId),
+      }));
+    }
+    staff.updatedAt = new Date().toISOString();
+    state.teachers = state.staff.map(staffToTeacher).filter((item): item is Teacher => item !== null);
+    await saveAcademicsState(state);
+    return staff;
+  }
+
   private async applyLocalStaffAssignments(state: AcademicsState, staff: StaffMember) {
     state.teacherAssignments = state.teacherAssignments.filter((item) => item.teacherUserId !== staff.userId);
     for (const classId of staff.assignedClassIds) {
       if (!state.classes.some((item) => item.id === classId && item.status === "ACTIVE")) continue;
-      const subjects = staff.subjectIds.length ? staff.subjectIds : [undefined];
-      for (const subjectId of subjects) {
+      state.teacherAssignments.push({
+        id: createId("tca"),
+        schoolId: staff.schoolId,
+        teacherUserId: staff.userId,
+        classId,
+        assignmentType: "GENERAL_ACCESS",
+        subjectIds: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      for (const subjectId of staff.subjectIds) {
         state.teacherAssignments.push({
           id: createId("tca"),
           schoolId: staff.schoolId,
@@ -866,8 +1099,40 @@ export class LocalAcademicsRepository implements AcademicsRepository {
     await saveAcademicsState(state);
   }
 
-  async removeTeacherAssignment(assignmentId: string) {
+  async removeTeacherAssignment(assignmentId: string, assignmentSnapshot?: TeacherClassAssignment[], _period?: { academicSessionId?: string; termId?: string }) {
     const state = await this.getState();
+    if (assignmentId.startsWith("inherited:")) {
+      const [, academicSessionId, termId, targetClassId, sourceId] = assignmentId.split(":");
+      const source = state.teacherAssignments.find((item) => item.id === sourceId);
+      if (!source || !academicSessionId || !termId || !targetClassId) return;
+      const now = new Date().toISOString();
+      for (const snapshot of assignmentSnapshot ?? []) {
+        if (snapshot.classId !== targetClassId || snapshot.id === assignmentId || snapshot.isRemoved) continue;
+        state.teacherAssignments.push({
+          ...snapshot,
+          id: createId("tca"),
+          classId: targetClassId,
+          className: state.classes.find((item) => item.id === targetClassId)?.displayName ?? snapshot.className,
+          academicSessionId,
+          termId,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      state.teacherAssignments.push({
+        ...source,
+        id: createId("tca-removed"),
+        classId: targetClassId,
+        className: state.classes.find((item) => item.id === targetClassId)?.displayName ?? source.className,
+        academicSessionId,
+        termId,
+        isRemoved: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await saveAcademicsState(state);
+      return;
+    }
     const assignment = state.teacherAssignments.find(
       (item) => item.id === assignmentId,
     );
@@ -875,6 +1140,14 @@ export class LocalAcademicsRepository implements AcademicsRepository {
     state.teacherAssignments = state.teacherAssignments.filter(
       (item) => item.id !== assignmentId,
     );
+    if (assignment.academicSessionId && assignment.termId) {
+      state.teacherAssignments.push({
+        ...assignment,
+        id: createId("tca-removed"),
+        isRemoved: true,
+        updatedAt: new Date().toISOString(),
+      });
+    }
     const schoolClass = state.classes.find(
       (item) => item.id === assignment.classId,
     );
@@ -972,6 +1245,16 @@ type BackendStudent = {
   createdAt: string;
   updatedAt: string;
   class?: BackendClass | null;
+  sessionEnrollments?: Array<{
+    id: string;
+    schoolId: string;
+    studentId: string;
+    sessionId: string;
+    classId: string;
+    status: string;
+    createdAt: string;
+    updatedAt: string;
+  }>;
 };
 
 type BackendClass = {
@@ -986,6 +1269,9 @@ type BackendClass = {
   schoolId: string;
   classTeacherId?: string | null;
   assignedTeacherIds?: string[];
+  classOwnerAssignments?: Array<{ userId: string; assignmentRole: "MAIN" | "CO"; name?: string }>;
+  classTeacher?: { id: string; name: string } | null;
+  assignedTeachers?: Array<{ id: string; name: string }>;
   studentIds?: string[];
   createdAt: string;
   updatedAt: string;
@@ -1000,7 +1286,22 @@ type BackendClass = {
     createdAt?: string;
     updatedAt?: string;
   }>;
+  periodTeacherAssignments?: Array<{
+    id: string;
+    teacherUserId: string;
+    classId: string;
+    subjectId?: string | null;
+    assignmentType: "CLASS_TEACHER" | "SUBJECT_TEACHER" | "GENERAL_ACCESS";
+    assignmentRole?: "MAIN" | "CO" | null;
+    academicSessionId: string;
+    termId: string;
+    isSnapshot?: boolean;
+    createdAt: string;
+    updatedAt: string;
+  }>;
 };
+
+type BackendClassResponse = BackendClass | { class: BackendClass };
 
 type BackendStaff = {
   id: string;
@@ -1023,11 +1324,26 @@ type BackendStaff = {
   gender?: string | null;
   dateOfBirth?: string | null;
   address?: string | null;
+  photoUrl?: string | null;
   subjects?: BackendSubject[];
   teachingAssignments?: Array<{
     classId: string;
     subjectId: string;
     subject?: BackendSubject | null;
+  }>;
+  periodAssignments?: Array<{
+    id: string;
+    classId: string;
+    teacherId: string;
+    assignmentType: "CLASS_TEACHER" | "SUBJECT_TEACHER" | "GENERAL_ACCESS";
+    subjectId?: string | null;
+    assignmentRole?: "MAIN" | "CO" | null;
+    academicSessionId: string;
+    termId: string;
+    isSnapshot?: boolean;
+    className?: string;
+    createdAt: string;
+    updatedAt: string;
   }>;
   assignedClasses?: BackendClass[];
   classTeacherClasses?: BackendClass[];
@@ -1038,10 +1354,12 @@ type BackendStaff = {
     jobTitle?: string | null;
     department?: string | null;
     phone?: string | null;
+    salaryAmount?: number | null;
     isTeachingStaff?: boolean;
     gender?: string | null;
     dateOfBirth?: string | null;
     address?: string | null;
+    photoUrl?: string | null;
   } | null;
 };
 
@@ -1067,6 +1385,8 @@ type BackendParent = {
   phone: string;
   email?: string;
   address?: string | null;
+  dateOfBirth?: string | null;
+  photoUrl?: string | null;
   accountStatus?: string | null;
   status?: string | null;
   user?: {
@@ -1079,6 +1399,8 @@ type BackendParent = {
     relationship?: string | null;
     phone?: string | null;
     address?: string | null;
+    dateOfBirth?: string | null;
+    photoUrl?: string | null;
   } | null;
   isPrimaryContact?: boolean;
   isEmergencyContact?: boolean;
@@ -1111,6 +1433,8 @@ type BackendCreateStudentBody = {
 
 type BackendCreateClassBody = {
   name: string;
+  level?: ConfiguredSchoolLevel;
+  capacity?: number;
   section?: string;
   academicYear: string;
   classTeacherId?: string;
@@ -1173,8 +1497,23 @@ async function fetchCurrentStudentList() {
   throw lastError instanceof Error ? lastError : new Error("Student profile could not be loaded.");
 }
 
-function backendLevel(value?: string): ConfiguredSchoolLevel {
-  return value?.toUpperCase().includes("PRIMARY") ? "PRIMARY" : "SECONDARY";
+function backendLevel(
+  value?: string,
+  className?: string,
+): ConfiguredSchoolLevel {
+  const normalized = value?.trim().toUpperCase();
+  if (normalized === "PRIMARY" || normalized === "SECONDARY") {
+    return normalized;
+  }
+
+  const template = inferTemplate(className ?? value ?? "");
+  if (template) return template.level;
+
+  return /^(CRECHE|PRE[- ]?NURSERY|NURSERY|KG|RECEPTION|PRIMARY)\b/i.test(
+    className ?? value ?? "",
+  )
+    ? "PRIMARY"
+    : "SECONDARY";
 }
 
 function backendClassStatus(value?: string): ClassStatus {
@@ -1234,11 +1573,22 @@ function mapBackendClass(item: BackendClass, index = 0): SchoolClass {
     rawSuffix && rawName.toLowerCase().endsWith(rawSuffix.toLowerCase())
       ? rawName
       : [rawName, rawSuffix].filter(Boolean).join(" ");
+  const template = inferTemplate(rawName);
+  const ownerName = (userId: string) =>
+    (item.classTeacher?.id === userId ? item.classTeacher.name : undefined) ??
+    item.assignedTeachers?.find((teacher) => teacher.id === userId)?.name;
+  const classOwnerAssignments = (item.classOwnerAssignments?.length
+    ? item.classOwnerAssignments
+    : item.classTeacherId
+      ? [{ userId: item.classTeacherId, assignmentRole: "MAIN" as const }]
+      : []
+  ).map((owner) => ({ ...owner, name: owner.name ?? ownerName(owner.userId) }));
   return {
     id: item.id,
     schoolId: item.schoolId,
-    level: backendLevel(item.level),
-    source: "CUSTOM",
+    level: backendLevel(item.level, rawName),
+    source: template ? "STANDARD" : "CUSTOM",
+    templateKey: template?.key,
     baseName,
     suffix: rawSuffix,
     arm: rawSuffix,
@@ -1255,6 +1605,7 @@ function mapBackendClass(item: BackendClass, index = 0): SchoolClass {
     classTeacherId: item.classTeacherId ?? null,
     assignedTeacherUserIds: item.assignedTeacherIds ?? [],
     assignedTeacherIds: item.assignedTeacherIds ?? [],
+    classOwnerAssignments,
     studentIds: item.studentIds ?? item.students?.map((student) => student.id) ?? [],
     teachingAssignments: item.teacherAssignments?.map((assignment) => ({
       id: assignment.id,
@@ -1265,6 +1616,20 @@ function mapBackendClass(item: BackendClass, index = 0): SchoolClass {
       createdAt: assignment.createdAt,
       updatedAt: assignment.updatedAt,
     })).filter((assignment) => assignment.teacherUserId && assignment.subjectId) ?? [],
+    periodTeacherAssignments: item.periodTeacherAssignments?.map((assignment) => ({
+      id: assignment.isSnapshot ? `period-snapshot:${assignment.academicSessionId}:${assignment.termId}:${assignment.classId}` : assignment.id,
+      schoolId: item.schoolId,
+      teacherUserId: assignment.teacherUserId,
+      classId: assignment.classId,
+      academicSessionId: assignment.academicSessionId,
+      termId: assignment.termId,
+      assignmentType: assignment.assignmentType,
+      assignmentRole: assignment.assignmentRole ?? undefined,
+      isRemoved: assignment.isSnapshot || undefined,
+      subjectIds: assignment.subjectId ? [assignment.subjectId] : [],
+      createdAt: assignment.createdAt,
+      updatedAt: assignment.updatedAt,
+    })) ?? [],
     status: backendClassStatus(item.status),
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
@@ -1350,10 +1715,11 @@ function mapBackendStaff(item: BackendStaff): StaffMember {
     fullName,
     email: item.email,
     phone: item.phone ?? item.staffProfile?.phone ?? undefined,
-    salaryAmount: item.salaryAmount ?? undefined,
+    salaryAmount: item.salaryAmount ?? item.staffProfile?.salaryAmount ?? undefined,
     gender: displayStaffGender(item.gender ?? item.staffProfile?.gender),
     dateOfBirth: item.dateOfBirth ?? item.staffProfile?.dateOfBirth ?? undefined,
     address: item.address ?? item.staffProfile?.address ?? undefined,
+    photoUrl: item.photoUrl ?? item.staffProfile?.photoUrl ?? undefined,
     role: isTeachingStaff ? "TEACHER" : "STAFF",
     jobTitle: item.jobTitle ?? item.staffProfile?.jobTitle ?? (isTeachingStaff ? "Teacher" : "Staff"),
     department: item.department ?? item.staffProfile?.department ?? undefined,
@@ -1365,6 +1731,21 @@ function mapBackendStaff(item: BackendStaff): StaffMember {
       classId: assignment.classId,
       subjectId: assignment.subjectId,
       subject: assignment.subject ? mapBackendSubject(assignment.subject) : undefined,
+    })),
+    periodAssignments: item.periodAssignments?.map((assignment) => ({
+      id: assignment.isSnapshot ? `period-snapshot:${assignment.academicSessionId}:${assignment.termId}:${assignment.classId}` : assignment.id,
+      schoolId: item.schoolId,
+      teacherUserId: assignment.teacherId,
+      classId: assignment.classId,
+      className: assignment.className,
+      academicSessionId: assignment.academicSessionId,
+      termId: assignment.termId,
+      assignmentType: assignment.assignmentType,
+      assignmentRole: assignment.assignmentRole ?? undefined,
+      isRemoved: assignment.isSnapshot || undefined,
+      subjectIds: assignment.subjectId ? [assignment.subjectId] : [],
+      createdAt: assignment.createdAt,
+      updatedAt: assignment.updatedAt,
     })),
     subjects: item.subjects?.map(mapBackendSubject),
     assignedClasses: item.assignedClasses?.map(mapBackendClass),
@@ -1411,7 +1792,11 @@ function mergeSubjects(remoteSubjects: Subject[], localSubjects: Subject[]) {
 
 function teacherAssignmentsFromStaff(staff: StaffMember[]): TeacherClassAssignment[] {
   return staff.flatMap((item) => {
-    const subjectAssignments = (item.teachingAssignments ?? []).map((assignment) => ({
+    const legacyAssignments: TeacherClassAssignment[] = (() => {
+    const teachingAssignments = item.teachingAssignments?.length
+      ? item.teachingAssignments
+      : item.assignedClassIds.flatMap((classId) => item.subjectIds.map((subjectId) => ({ classId, subjectId })));
+    const subjectAssignments = teachingAssignments.map((assignment) => ({
       id: `staff-assignment-${item.userId}-${assignment.classId}-${assignment.subjectId}`,
       schoolId: item.schoolId,
       teacherUserId: item.userId,
@@ -1421,9 +1806,7 @@ function teacherAssignmentsFromStaff(staff: StaffMember[]): TeacherClassAssignme
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
     }));
-    const subjectClassIds = new Set(subjectAssignments.map((assignment) => assignment.classId));
     const generalAssignments = item.assignedClassIds
-      .filter((classId) => !subjectClassIds.has(classId))
       .map((classId) => ({
         id: `staff-assignment-${item.userId}-${classId}-general`,
         schoolId: item.schoolId,
@@ -1445,6 +1828,8 @@ function teacherAssignmentsFromStaff(staff: StaffMember[]): TeacherClassAssignme
       updatedAt: item.updatedAt,
     }));
     return [...subjectAssignments, ...generalAssignments, ...classTeacherAssignments];
+    })();
+    return [...legacyAssignments, ...(item.periodAssignments ?? [])];
   });
 }
 
@@ -1474,6 +1859,23 @@ function studentBody(input: StudentInput | Partial<StudentInput>): BackendCreate
 
 function mergeStudentFallback(remote: Student, fallback?: Partial<StudentInput> | Student): Student {
   if (!fallback) return remote;
+  if (
+    "updatedAt" in fallback &&
+    fallback.updatedAt &&
+    remote.updatedAt &&
+    fallback.updatedAt > remote.updatedAt
+  ) {
+    const local = fallback as Student;
+    return {
+      ...remote,
+      ...local,
+      id: remote.id,
+      schoolId: remote.schoolId,
+      userId: remote.userId ?? local.userId,
+      classId: remote.classId,
+      currentClassId: remote.currentClassId ?? remote.classId,
+    };
+  }
   const hasGuardianLinks = remote.guardianIds.length > 0;
   return {
     ...remote,
@@ -1504,13 +1906,49 @@ function mergeStudentFallback(remote: Student, fallback?: Partial<StudentInput> 
   };
 }
 
-function isUsableStudent(item: Student) {
-  return Boolean(
-    item.id &&
-      item.firstName?.trim() &&
-      item.lastName?.trim() &&
-      item.admissionNumber?.trim(),
-  );
+export interface EnrollmentContext {
+  schoolId: string;
+  academicSessionId: string;
+  academicSessionName?: string;
+  previousAcademicSessionId?: string;
+}
+
+function mergeStaffFallback(remote: StaffMember, fallback?: StaffMember): StaffMember {
+  if (!fallback) return remote;
+  if (fallback.updatedAt && remote.updatedAt && fallback.updatedAt > remote.updatedAt) {
+    return {
+      ...remote,
+      ...fallback,
+      id: remote.id,
+      schoolId: remote.schoolId,
+      userId: remote.userId,
+    };
+  }
+  return {
+    ...remote,
+    salaryAmount: remote.salaryAmount ?? fallback.salaryAmount,
+    phone: remote.phone ?? fallback.phone,
+    department: remote.department ?? fallback.department,
+    gender: remote.gender ?? fallback.gender,
+    dateOfBirth: remote.dateOfBirth ?? fallback.dateOfBirth,
+    address: remote.address ?? fallback.address,
+    photoUrl: remote.photoUrl ?? fallback.photoUrl,
+    assignedClassIds: remote.assignedClassIds.length ? remote.assignedClassIds : fallback.assignedClassIds,
+    classTeacherClassIds: remote.classTeacherClassIds.length ? remote.classTeacherClassIds : fallback.classTeacherClassIds,
+    subjectIds: remote.subjectIds.length ? remote.subjectIds : fallback.subjectIds,
+  };
+}
+
+function unwrapStaffResponse(response: BackendStaff | { staff: BackendStaff }) {
+  return "staff" in response ? response.staff : response;
+}
+
+function unwrapClassResponse(response: BackendClassResponse) {
+  return "class" in response ? response.class : response;
+}
+
+function unwrapStudentResponse(response: BackendStudent | { student: BackendStudent }) {
+  return "student" in response ? response.student : response;
 }
 
 function mapBackendParent(item: BackendParent): Guardian {
@@ -1524,6 +1962,8 @@ function mapBackendParent(item: BackendParent): Guardian {
     phone: item.parentProfile?.phone ?? item.phone ?? "",
     email: item.email ?? item.user?.email ?? undefined,
     address: item.parentProfile?.address ?? item.address ?? undefined,
+    dateOfBirth: item.parentProfile?.dateOfBirth ?? item.dateOfBirth ?? undefined,
+    photoUrl: item.photoUrl ?? item.parentProfile?.photoUrl ?? undefined,
     accountStatus: item.accountStatus ?? item.user?.status ?? item.status ?? undefined,
     isPrimaryContact: item.isPrimaryContact ?? true,
     isEmergencyContact: item.isEmergencyContact ?? true,
@@ -1537,6 +1977,8 @@ function classBody(input: CreateClassInput | UpdateClassInput): BackendCreateCla
   const section = input.suffix ?? arm;
   return {
     name: input.baseName ?? ("displayName" in input ? input.displayName : undefined) ?? "",
+    level: input.level,
+    capacity: input.capacity,
     section,
     academicYear: input.academicYear || "2026/2027",
     classTeacherId: input.classTeacherUserId,
@@ -1633,6 +2075,16 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
     await saveAcademicsState(state);
   }
 
+  private async saveLocalStaff(staff: StaffMember) {
+    const state = await super.getState();
+    state.staff = [
+      staff,
+      ...state.staff.filter((item) => item.id !== staff.id && item.userId !== staff.userId),
+    ];
+    state.teachers = state.staff.map(staffToTeacher).filter((item): item is Teacher => item !== null);
+    await saveAcademicsState(state);
+  }
+
   private async saveLocalClass(schoolClass: SchoolClass) {
     const state = await super.getState();
     state.classes = sortClasses([
@@ -1667,7 +2119,10 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
         ? apiRequest<BackendList<BackendParent>>(role === "PARENT" ? "/me/parents" : "/parents")
         : Promise.resolve([]),
     ]);
-    const classes =
+    if (classesResponse.status === "rejected" && (role === "PARENT" || role === "STUDENT")) {
+      throw classesResponse.reason;
+    }
+    let classes =
       classesResponse.status === "fulfilled"
         ? unwrapList(classesResponse.value).map(mapBackendClass)
         : local.classes;
@@ -1706,20 +2161,51 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
             return schoolClass ? { ...merged, schoolLevel: schoolClass.level } : merged;
           })
         : local.students;
-    const remoteStudentIds = new Set(remoteStudents.map((item) => item.id));
-    const students =
-      studentsResponse.status === "fulfilled"
-        ? [
-            ...remoteStudents,
-            ...local.students.filter(
-              (item) => isUsableStudent(item) && !remoteStudentIds.has(item.id),
-            ),
-          ]
-        : remoteStudents;
+    // A successful authenticated response is the student roster for this user.
+    // Browser records may belong to another role, session, or an old class and
+    // must not create extra students in the current dashboard.
+    const students = remoteStudents;
+    const studentEnrollments = studentsResponse.status === "fulfilled"
+      ? studentsResponse.value.flatMap((student) =>
+          (student.sessionEnrollments ?? []).map((enrollment) => ({
+            id: enrollment.id,
+            schoolId: enrollment.schoolId,
+            studentId: enrollment.studentId,
+            academicSessionId: enrollment.sessionId,
+            classId: enrollment.classId,
+            status: enrollment.status as StudentEnrollment["status"],
+            createdAt: enrollment.createdAt,
+            updatedAt: enrollment.updatedAt,
+          })),
+        )
+      : local.studentEnrollments;
+    const localStaffById = new Map<string, StaffMember>();
+    for (const item of local.staff) {
+      localStaffById.set(item.id, item);
+      localStaffById.set(item.userId, item);
+    }
     const staff =
       staffResponse.status === "fulfilled"
-        ? unwrapList(staffResponse.value).map(mapBackendStaff)
+        ? unwrapList(staffResponse.value).map((item) => {
+            const mapped = mapBackendStaff(item);
+            return mergeStaffFallback(mapped, localStaffById.get(mapped.id) ?? localStaffById.get(mapped.userId));
+          })
         : local.staff;
+    const ownTeacher = role === "TEACHER"
+      ? staff.find((item) => item.userId === userId || item.id === userId)
+        ?? local.staff.find((item) => item.userId === userId || item.id === userId)
+      : undefined;
+    if (ownTeacher) {
+      const classMap = new Map(classes.map((item) => [item.id, item]));
+      for (const assignedClass of [...(ownTeacher.assignedClasses ?? []), ...(ownTeacher.classTeacherClasses ?? [])]) {
+        classMap.set(assignedClass.id, classMap.get(assignedClass.id) ?? assignedClass);
+      }
+      const teacherClassIds = new Set([...ownTeacher.assignedClassIds, ...ownTeacher.classTeacherClassIds]);
+      for (const localClass of local.classes) {
+        if (teacherClassIds.has(localClass.id) && !classMap.has(localClass.id)) classMap.set(localClass.id, localClass);
+      }
+      classes = [...classMap.values()];
+    }
     const embeddedClassSubjects = classes
       .flatMap((item) => item.teachingAssignments ?? [])
       .map((assignment) => assignment.subject)
@@ -1732,18 +2218,43 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
           )
         : mergeSubjects(embeddedClassSubjects, local.subjects);
     const teachers = staff.map(staffToTeacher).filter((item): item is Teacher => item !== null);
-    const teacherAssignments =
-      role === "TEACHER" && userId
-        ? teacherAssignmentsFromClasses(classes, userId)
-        : teacherAssignmentsFromStaff(staff);
+    let teacherAssignments = teacherAssignmentsFromStaff(
+      role === "TEACHER" && ownTeacher ? [ownTeacher] : staff,
+    );
+    const assignmentIds = new Set(teacherAssignments.map((item) => item.id));
+    for (const assignment of classes.flatMap((item) => item.periodTeacherAssignments ?? [])) {
+      if (!assignmentIds.has(assignment.id)) {
+        teacherAssignments.push(assignment);
+        assignmentIds.add(assignment.id);
+      }
+    }
+    const storedPeriodAssignments = local.teacherAssignments.filter((item) => item.academicSessionId && item.termId);
+    const mergedAssignmentIds = new Set(teacherAssignments.map((item) => item.id));
+    teacherAssignments.push(...storedPeriodAssignments.filter((item) => !mergedAssignmentIds.has(item.id)));
+    if (role === "TEACHER" && userId) {
+      const assignmentMap = new Map<string, TeacherClassAssignment>();
+      for (const assignment of [...teacherAssignments, ...teacherAssignmentsFromClasses(classes, userId)]) {
+        const key = `${assignment.teacherUserId}:${assignment.classId}:${assignment.assignmentType}:${assignment.academicSessionId ?? ""}:${assignment.termId ?? ""}`;
+        const current = assignmentMap.get(key);
+        assignmentMap.set(key, current
+          ? { ...current, subjectIds: [...new Set([...current.subjectIds, ...assignment.subjectIds])] }
+          : assignment);
+      }
+      teacherAssignments = [...assignmentMap.values()];
+    }
     const localClassById = new Map(local.classes.map((item) => [item.id, item]));
     return {
       ...local,
       classes: classes.map((item) => ({
         ...item,
         capacity: item.capacity ?? localClassById.get(item.id)?.capacity,
-        level: localClassById.get(item.id)?.level ?? item.level,
-        status: localClassById.get(item.id)?.status ?? item.status,
+        academicYear: item.academicYear ?? localClassById.get(item.id)?.academicYear,
+        academicSessionId: item.academicSessionId ?? localClassById.get(item.id)?.academicSessionId,
+        level:
+          getClassTemplate(item.templateKey)?.level ??
+          localClassById.get(item.id)?.level ??
+          item.level,
+        status: item.status,
         classTeacherUserId:
           (role === "TEACHER"
             ? undefined
@@ -1754,6 +2265,7 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
           .map((student) => student.id),
       })),
       students,
+      studentEnrollments,
       staff,
       teachers,
       subjects,
@@ -1768,11 +2280,11 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
 
   async createClass(input: CreateClassInput) {
     if (!this.hasSession()) return super.createClass(input);
-    const created = mapBackendClass(await apiRequest<BackendClass>("/classes", {
+    const created = mapBackendClass(unwrapClassResponse(await apiRequest<BackendClassResponse>("/classes", {
       method: "POST",
       body: JSON.stringify(classBody(input)),
-    }));
-    const merged = { ...created, capacity: input.capacity ?? created.capacity, level: input.level ?? created.level, status: input.status ?? created.status };
+    })));
+    const merged = { ...created, schoolId: input.schoolId ?? created.schoolId, academicYear: input.academicYear, academicSessionId: input.academicSessionId, capacity: input.capacity ?? created.capacity, level: input.level ?? created.level, status: input.status ?? created.status };
     await this.saveLocalClass(merged);
     return merged;
   }
@@ -1780,13 +2292,29 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
   async updateClass(id: string, input: UpdateClassInput) {
     if (!this.hasSession()) return super.updateClass(id, input);
     const existing = (await super.getState()).classes.find((item) => item.id === id);
-    const updated = mapBackendClass(await apiRequest<BackendClass>(`/classes/${id}`, {
+    const updated = mapBackendClass(unwrapClassResponse(await apiRequest<BackendClassResponse>(`/classes/${id}`, {
       method: "PATCH",
       body: JSON.stringify(classBody(input)),
-    }));
+    })));
     const merged = { ...updated, capacity: input.capacity ?? existing?.capacity ?? updated.capacity, level: input.level ?? existing?.level ?? updated.level, status: input.status ?? existing?.status ?? updated.status };
     await this.saveLocalClass(merged);
     return merged;
+  }
+
+  async setClassOwners(classId: string, classOwnerUserId: string, coOwnerUserIds: string[]) {
+    if (!this.hasSession()) return super.setClassOwners(classId, classOwnerUserId, coOwnerUserIds);
+    await apiRequest(`/classes/${classId}/owners`, {
+      method: "PATCH",
+      body: JSON.stringify({ classOwnerUserId, coOwnerUserIds }),
+    });
+  }
+
+  async setClassStatus(id: string, status: ClassStatus) {
+    if (!this.hasSession()) return super.setClassStatus(id, status);
+    await apiRequest(
+      `/classes/${id}/${status === "ACTIVE" ? "activate" : "archive"}`,
+      { method: "PATCH" },
+    );
   }
 
   async removeClass(id: string) {
@@ -1795,8 +2323,8 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
     return "REMOVED" as const;
   }
 
-  async moveStudents(studentIds: string[], classId: string) {
-    if (!this.hasSession()) return super.moveStudents(studentIds, classId);
+  async moveStudents(studentIds: string[], classId: string, context: EnrollmentContext) {
+    if (!this.hasSession() || !isUuid(context.academicSessionId)) return super.moveStudents(studentIds, classId, context);
     await apiRequest(`/classes/${classId}/students`, {
       method: "PATCH",
       body: JSON.stringify({ studentIds }),
@@ -1808,9 +2336,14 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
     classIds: string[];
     assignmentType: TeacherClassAssignmentType;
     subjectIds: string[];
+    assignmentPolicy?: "CO" | "MAIN" | "REPLACE";
+    assignmentSnapshot?: TeacherClassAssignment[];
     subjectAssignments?: Array<{ classId: string; subjectIds: string[] }>;
+    schoolId?: string;
+    academicSessionId?: string;
+    termId?: string;
   }) {
-    if (!this.hasSession()) return super.saveTeacherAssignments(input);
+    if (!this.hasSession() || !isUuid(input.academicSessionId) || !isUuid(input.termId)) return super.saveTeacherAssignments(input);
     if (!input.teacherUserId || !input.classIds.length) {
       throw new Error("Select a teacher and at least one class.");
     }
@@ -1853,28 +2386,44 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
     await apiRequest(`/staff/${staffId}/classes`, {
       method: "PATCH",
       body: JSON.stringify({
+        academicSessionId: input.academicSessionId,
+        termId: input.termId,
+        periodClassId: input.classIds[0],
+        periodAssignmentType: input.assignmentType,
+        periodSubjectIds: input.subjectIds,
+        assignmentPolicy: input.assignmentPolicy,
+        periodAssignments: (input.assignmentSnapshot ?? [])
+          .filter((item) => item.classId === input.classIds[0] && !item.isRemoved && item.assignmentType !== "GENERAL_ACCESS")
+          .map((item) => ({
+            teacherId: item.teacherUserId,
+            classId: item.classId,
+            assignmentType: item.assignmentType,
+            subjectId: item.assignmentType === "SUBJECT_TEACHER" ? item.subjectIds[0] : undefined,
+            assignmentRole: item.assignmentRole,
+          })),
         assignedClassIds: [...assignedClassIds],
         classTeacherClassIds: [...classTeacherClassIds],
         subjectIds,
         subjectAssignments: subjectPayload,
       }),
     });
-    const now = new Date().toISOString();
-    return input.classIds.flatMap((classId) =>
-      [
-        ...(input.assignmentType === "CLASS_TEACHER" || !input.subjectIds.length ? [""] : []),
-        ...input.subjectIds,
-      ].map((subjectId) => ({
-        id: `saved-${input.teacherUserId}-${classId}-${subjectId || input.assignmentType}`,
-        schoolId: "",
-        teacherUserId: input.teacherUserId,
-        classId,
-        assignmentType: subjectId ? "SUBJECT_TEACHER" : input.assignmentType,
-        subjectIds: subjectId ? [subjectId] : [],
-        createdAt: now,
-        updatedAt: now,
-      })),
-    );
+    const localState = await super.getState();
+    const localKeys = new Set(localState.teacherAssignments.map((item) => `${item.teacherUserId}:${item.classId}:${item.assignmentType}:${item.subjectIds.join(",")}:${item.academicSessionId ?? ""}:${item.termId ?? ""}`));
+    for (const assignment of state.teacherAssignments.filter((item) => input.classIds.includes(item.classId) && !item.academicSessionId && !item.termId)) {
+      const assignmentKey = `${assignment.teacherUserId}:${assignment.classId}:${assignment.assignmentType}:${assignment.subjectIds.join(",")}:${input.academicSessionId}:${input.termId}`;
+      if (localKeys.has(assignmentKey)) continue;
+      localState.teacherAssignments.push({
+        ...assignment,
+        id: createId("tca"),
+        academicSessionId: input.academicSessionId,
+        termId: input.termId,
+        className: state.classes.find((item) => item.id === assignment.classId)?.displayName ?? assignment.className,
+        assignmentRole: assignment.assignmentType === "CLASS_TEACHER" || assignment.assignmentType === "SUBJECT_TEACHER" ? "MAIN" : undefined,
+      });
+      localKeys.add(assignmentKey);
+    }
+    await saveAcademicsState(localState);
+    return super.saveTeacherAssignments(input);
   }
 
   async createStaff(input: StaffInput) {
@@ -1889,6 +2438,43 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
     return mapBackendStaff(response.staff);
   }
 
+  async updateStaff(id: string, input: Partial<StaffInput>) {
+    if (!this.hasSession()) return super.updateStaff(id, input);
+    const response = await apiRequest<BackendStaff | { staff: BackendStaff }>(`/staff/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        ...input,
+        gender: input.gender === "Male" ? "MALE" : input.gender === "Female" ? "FEMALE" : input.gender,
+      }),
+    });
+    const local = (await super.getState()).staff.find((item) => item.id === id || item.userId === id);
+    const updated = mergeStaffFallback(mapBackendStaff(unwrapStaffResponse(response)), {
+      ...(local ?? mapBackendStaff(unwrapStaffResponse(response))),
+      fullName: input.name?.trim().replace(/\s+/g, " ") || local?.fullName || mapBackendStaff(unwrapStaffResponse(response)).fullName,
+      email: input.email?.trim().toLowerCase() || local?.email || mapBackendStaff(unwrapStaffResponse(response)).email,
+      jobTitle: input.jobTitle?.trim() || local?.jobTitle || mapBackendStaff(unwrapStaffResponse(response)).jobTitle,
+      employeeNumber: input.employeeNumber ?? local?.employeeNumber,
+      staffId: input.employeeNumber ?? local?.staffId,
+      phone: input.phone ?? local?.phone,
+      department: input.department ?? local?.department,
+      salaryAmount: input.salaryAmount ?? local?.salaryAmount,
+      gender: input.gender ?? local?.gender,
+      dateOfBirth: input.dateOfBirth ?? local?.dateOfBirth,
+      address: input.address ?? local?.address,
+      photoUrl: input.photoUrl ?? local?.photoUrl,
+      isTeachingStaff: input.isTeachingStaff ?? local?.isTeachingStaff ?? mapBackendStaff(unwrapStaffResponse(response)).isTeachingStaff,
+      role: input.isTeachingStaff === false ? "STAFF" : input.isTeachingStaff === true ? "TEACHER" : local?.role ?? mapBackendStaff(unwrapStaffResponse(response)).role,
+      updatedAt: new Date().toISOString(),
+    });
+    if (!updated.isTeachingStaff) {
+      updated.assignedClassIds = [];
+      updated.classTeacherClassIds = [];
+      updated.subjectIds = [];
+    }
+    await this.saveLocalStaff(updated);
+    return updated;
+  }
+
   async createGuardian(input: Omit<Guardian, "id" | "schoolId" | "createdAt" | "updatedAt">) {
     if (!this.hasSession()) return super.createGuardian(input);
     if (!input.email) throw new Error("Parent email is required so they can set a password.");
@@ -1899,7 +2485,23 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
         email: input.email,
         phone: input.phone,
         relationship: input.relationship,
-        address: input.address,
+          address: input.address,
+          dateOfBirth: input.dateOfBirth,
+        photoUrl: input.photoUrl,
+      }),
+    });
+    const parent = mapBackendParent(response.parent);
+    await this.saveLocalGuardian(parent);
+    return parent;
+  }
+
+  async updateGuardian(id: string, input: Partial<Omit<Guardian, "id" | "schoolId" | "createdAt" | "updatedAt">>) {
+    if (!this.hasSession()) return super.updateGuardian(id, input);
+    const response = await apiRequest<{ parent: BackendParent }>(`/parents/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+          ...input,
+          name: input.fullName,
       }),
     });
     const parent = mapBackendParent(response.parent);
@@ -1909,22 +2511,81 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
 
   async assignStaffClasses(staffId: string, input: { assignedClassIds: string[]; classTeacherClassIds: string[]; subjectIds?: string[] }) {
     if (!this.hasSession()) return super.assignStaffClasses(staffId, input);
-    const response = await apiRequest<{ staff: BackendStaff }>(`/staff/${staffId}/classes`, {
+    const response = await apiRequest<BackendStaff | { staff: BackendStaff }>(`/staff/${staffId}/classes`, {
       method: "PATCH",
       body: JSON.stringify(input),
     });
-    return mapBackendStaff(response.staff);
+    const local = (await super.getState()).staff.find((item) => item.id === staffId || item.userId === staffId);
+    const updated = {
+      ...mergeStaffFallback(mapBackendStaff(unwrapStaffResponse(response)), local),
+      assignedClassIds: input.assignedClassIds,
+      classTeacherClassIds: input.classTeacherClassIds,
+      subjectIds: input.subjectIds ?? local?.subjectIds ?? [],
+      updatedAt: new Date().toISOString(),
+    };
+    await this.saveLocalStaff(updated);
+    return updated;
   }
 
-  async removeTeacherAssignment(assignmentId: string) {
-    if (!this.hasSession()) return super.removeTeacherAssignment(assignmentId);
+  async removeTeacherAssignment(assignmentId: string, assignmentSnapshot?: TeacherClassAssignment[], period?: { academicSessionId?: string; termId?: string }) {
+    if (!this.hasSession()) return super.removeTeacherAssignment(assignmentId, assignmentSnapshot, period);
     const state = await this.getState();
-    const assignment = state.teacherAssignments.find((item) => item.id === assignmentId);
-    if (!assignment) return;
+    const inheritedParts = assignmentId.startsWith("inherited:") ? assignmentId.split(":") : undefined;
+    const sourceId = inheritedParts?.[4];
+    const source = sourceId
+      ? state.teacherAssignments.find((item) => item.id === sourceId) ?? assignmentSnapshot?.find((item) => item.id === sourceId)
+      : undefined;
+    const assignment = state.teacherAssignments.find((item) => item.id === assignmentId) ?? (source && inheritedParts ? {
+      ...source,
+      id: assignmentId,
+      classId: inheritedParts[3],
+      academicSessionId: inheritedParts[1],
+      termId: inheritedParts[2],
+    } : undefined);
+    if (!assignment) return super.removeTeacherAssignment(assignmentId, assignmentSnapshot);
     const staff = state.staff.find(
       (item) => item.userId === assignment.teacherUserId || item.id === assignment.teacherUserId,
     );
     if (!staff) return super.removeTeacherAssignment(assignmentId);
+    const assignmentSessionId = assignment.academicSessionId ?? period?.academicSessionId;
+    const assignmentTermId = assignment.termId ?? period?.termId;
+    if (assignmentSessionId && assignmentTermId && isUuid(assignmentSessionId) && isUuid(assignmentTermId)) {
+      const exactMarkerId = `period-snapshot:${assignmentSessionId}:${assignmentTermId}:${assignment.classId}`;
+      const hasExactSnapshot = state.teacherAssignments.some((item) => item.id === exactMarkerId);
+      const classLabel = assignment.className ?? state.classes.find((item) => item.id === assignment.classId)?.displayName;
+      let currentRows = state.teacherAssignments.filter((item) =>
+        item.classId === assignment.classId && item.academicSessionId === assignmentSessionId && item.termId === assignmentTermId && !item.isRemoved && item.assignmentType !== "GENERAL_ACCESS",
+      );
+      if (!hasExactSnapshot) {
+        currentRows = state.teacherAssignments.filter((item) =>
+          !item.isRemoved && item.assignmentType !== "GENERAL_ACCESS" &&
+          ((source && item.academicSessionId === source.academicSessionId && item.termId === source.termId && (item.classId === source.classId || Boolean(classLabel && item.className?.toLowerCase() === classLabel.toLowerCase()))) ||
+            (!source && !item.academicSessionId && !item.termId && item.classId === assignment.classId)),
+        ).map((item) => ({ ...item, classId: assignment.classId, className: classLabel }));
+      }
+      const snapshot = currentRows
+        .filter((item) => !(item.teacherUserId === assignment.teacherUserId && item.assignmentType === assignment.assignmentType && item.subjectIds.join(",") === assignment.subjectIds.join(",")))
+        .map((item) => ({
+          teacherId: item.teacherUserId,
+          classId: item.classId,
+          assignmentType: item.assignmentType,
+          subjectId: item.assignmentType === "SUBJECT_TEACHER" ? item.subjectIds[0] : undefined,
+          assignmentRole: item.assignmentRole,
+        }));
+      await apiRequest(`/staff/${staff.id}/classes`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          academicSessionId: assignmentSessionId,
+          termId: assignmentTermId,
+          periodClassId: assignment.classId,
+          periodAssignmentType: "GENERAL_ACCESS",
+          assignmentSnapshotOnly: true,
+          periodAssignments: snapshot,
+        }),
+      });
+      await super.removeTeacherAssignment(assignmentId, assignmentSnapshot);
+      return;
+    }
     const remaining = state.teacherAssignments.filter(
       (item) =>
         item.id !== assignmentId &&
@@ -1978,6 +2639,7 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
         subjectIds: [...subjectIds],
       }),
     });
+    await super.removeTeacherAssignment(assignmentId);
   }
 
   async setStaffStatus(staffId: string, status: "ACTIVE" | "SUSPENDED") {
@@ -2033,8 +2695,8 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
     await apiRequest<void>(`/subjects/${id}`, { method: "DELETE" });
   }
 
-  async createStudent(input: StudentInput) {
-    if (!this.hasSession()) return super.createStudent(input);
+  async createStudent(input: StudentInput, context: EnrollmentContext) {
+    if (!this.hasSession() || !isUuid(context.academicSessionId)) return super.createStudent(input, context);
     const response = await apiRequest<BackendStudent | { student: BackendStudent }>("/students", {
       method: "POST",
       body: JSON.stringify({
@@ -2056,16 +2718,17 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
       });
     }
     await this.saveLocalStudent(created);
+    await super.ensureSessionEnrollments(context, true);
     return created;
   }
 
   async updateStudent(id: string, input: Partial<StudentInput>) {
     if (!this.hasSession()) return super.updateStudent(id, input);
     const existing = (await super.getState()).students.find((item) => item.id === id);
-    let updated = mergeStudentFallback(mapBackendStudent(await apiRequest<BackendStudent>(`/students/${id}`, {
+    let updated = mergeStudentFallback(mapBackendStudent(unwrapStudentResponse(await apiRequest<BackendStudent | { student: BackendStudent }>(`/students/${id}`, {
       method: "PATCH",
       body: JSON.stringify(studentBody(input)),
-    })), { ...existing, ...input });
+    }))), { ...existing, ...input, updatedAt: new Date().toISOString() } as Student);
     if (input.status && updated.status !== input.status) {
       const response = await apiRequest<{ student: BackendStudent }>(`/students/${id}/status`, {
         method: "PATCH",
@@ -2083,42 +2746,55 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
 
   async assignStudentParents(studentId: string, guardianIds: string[]) {
     if (!this.hasSession()) return super.assignStudentParents(studentId, guardianIds);
-    const response = await apiRequest<{ student: BackendStudent }>(`/students/${studentId}/parents`, {
+    const response = await apiRequest<BackendStudent | { student: BackendStudent }>(`/students/${studentId}/parents`, {
       method: "PATCH",
       body: JSON.stringify({ parentIds: guardianIds }),
     });
     const local = await super.getState();
     const existing = local.students.find((item) => item.id === studentId);
-    const updated = mergeStudentFallback(mapBackendStudent(response.student), {
+    const updated = mergeStudentFallback(mapBackendStudent(unwrapStudentResponse(response)), {
       ...existing,
       guardianIds,
       parentIds: guardianIds,
+      updatedAt: new Date().toISOString(),
     });
     await this.saveLocalStudent(updated);
     return updated;
   }
 
-  async moveStudentToClass(input: { studentId: string; classId: string }) {
-    if (!this.hasSession()) {
+  async moveStudentToClass(input: { studentId: string; classId: string; effectiveDate: string; reason: string }, context: EnrollmentContext) {
+    if (!this.hasSession() || !isUuid(context.academicSessionId)) {
       return super.moveStudentToClass({
         ...input,
-        effectiveDate: new Date().toISOString().slice(0, 10),
-        reason: "Class assignment updated",
-      });
+      }, context);
     }
-    return mapBackendStudent(await apiRequest<BackendStudent>(`/students/${input.studentId}/class`, {
+    const local = await super.getState();
+    const existing = local.students.find((item) => item.id === input.studentId);
+    const updated = mergeStudentFallback(mapBackendStudent(unwrapStudentResponse(await apiRequest<BackendStudent | { student: BackendStudent }>(`/students/${input.studentId}/class`, {
       method: "PATCH",
-      body: JSON.stringify({ classId: input.classId }),
-    }));
+      body: JSON.stringify({ classId: input.classId, academicSessionId: context.academicSessionId, effectiveDate: input.effectiveDate, reason: input.reason }),
+    }))), { ...existing, classId: input.classId, updatedAt: new Date().toISOString() } as Student);
+    await this.saveLocalStudent(updated);
+    if (local.classes.some((item) => item.id === input.classId && item.schoolId === context.schoolId)) {
+      await super.moveStudentToClass(input, context);
+    }
+    return updated;
   }
 
   async updateStudentStatus(id: string, status: StudentStatus) {
     if (!this.hasSession()) return super.updateStudentStatus(id, status);
-    const response = await apiRequest<{ student: BackendStudent }>(`/students/${id}/status`, {
+    const response = await apiRequest<BackendStudent | { student: BackendStudent }>(`/students/${id}/status`, {
       method: "PATCH",
       body: JSON.stringify({ status }),
     });
-    return mapBackendStudent(response.student);
+    const existing = (await super.getState()).students.find((item) => item.id === id);
+    const updated = mergeStudentFallback(mapBackendStudent(unwrapStudentResponse(response)), {
+      ...existing,
+      status,
+      updatedAt: new Date().toISOString(),
+    } as Student);
+    await this.saveLocalStudent(updated);
+    return updated;
   }
 }
 

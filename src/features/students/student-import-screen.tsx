@@ -10,8 +10,11 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useAcademics } from "@/features/academics/academics-context";
 import type { SchoolLevel, StudentStatus } from "@/features/academics/academics.types";
+import { useAcademicPeriod } from "@/features/academic-period/academic-period-context";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
+import { downloadCsvFile } from "@/lib/csv-download";
+import { STUDENT_IMPORT_TEMPLATE, STUDENT_IMPORT_TEMPLATE_FILENAME } from "@/lib/import-templates";
 
 const fields = [
   "admissionNumber",
@@ -20,6 +23,7 @@ const fields = [
   "lastName",
   "gender",
   "dateOfBirth",
+  "studentPhotoUrl",
   "schoolType",
   "className",
   "admissionDate",
@@ -27,6 +31,7 @@ const fields = [
   "guardianRelationship",
   "guardianPhone",
   "guardianEmail",
+  "guardianPhotoUrl",
   "address",
   "studentStatus",
 ] as const;
@@ -46,6 +51,7 @@ const labels: Record<Field, string> = {
   lastName: "Last name",
   gender: "Gender",
   dateOfBirth: "Date of birth",
+  studentPhotoUrl: "Student photo URL",
   schoolType: "School type",
   className: "Class name",
   admissionDate: "Admission date",
@@ -53,6 +59,7 @@ const labels: Record<Field, string> = {
   guardianRelationship: "Guardian relationship",
   guardianPhone: "Guardian phone",
   guardianEmail: "Guardian email",
+  guardianPhotoUrl: "Guardian photo URL",
   address: "Address",
   studentStatus: "Student status",
 };
@@ -85,33 +92,40 @@ function parseCsv(text: string) {
     const cells = parseLine(line);
     return Object.fromEntries(
       headers.map((header, index) => [header, cells[index] ?? ""]),
+
     );
   });
   return { headers, rows };
 }
 
-function download(name: string, content: string) {
-  const anchor = document.createElement("a");
-  anchor.href = URL.createObjectURL(new Blob([content], { type: "text/csv" }));
-  anchor.download = name;
-  anchor.click();
-  URL.revokeObjectURL(anchor.href);
-}
-
-function importStudentEmail(admissionNumber: string, rowNumber: number) {
-  const slug = (admissionNumber || `row-${rowNumber}`)
+function importStudentEmail(admissionNumber: string, firstName: string, lastName: string, dateOfBirth: string) {
+  const identity = admissionNumber || [firstName, lastName, dateOfBirth].filter(Boolean).join("-");
+  const slug = identity
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 80);
-  return `${slug || `row-${rowNumber}`}@students.schoolos.test`;
+  return `${slug || "student"}@students.schoolos.test`;
 }
 
 const normaliseKey = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase();
 const normalisePhone = (value?: string) => value?.replace(/\D/g, "") ?? "";
+const csvCell = (value: string) => `"${value.replaceAll('"', '""')}"`;
+
+function friendlyImportError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("already exists") || message.includes("unique constraint") || message.includes("p2002")) {
+    return "This student may already be in the school records. Check the admission number in the session and class where the student was first added.";
+  }
+  if (message.includes("class") && (message.includes("not found") || message.includes("active"))) {
+    return "The selected class is unavailable. Choose an active class and try again.";
+  }
+  return "We couldn’t save this student. Check the row details and try again.";
+}
 
 export function StudentImportPage() {
   const { state, createGuardian, createStudent } = useAcademics();
+  const { selectedSession, selectedTerm } = useAcademicPeriod();
   const { toast } = useActionFeedback();
   const { settings } = useSchoolSettings();
   const [step, setStep] = useState<"UPLOAD" | "MAP" | "PREVIEW" | "SUMMARY">("UPLOAD");
@@ -144,6 +158,7 @@ export function StudentImportPage() {
     const firstName = value(row.raw, "firstName");
     const lastName = value(row.raw, "lastName");
     const birthDate = value(row.raw, "dateOfBirth");
+    const importEmail = importStudentEmail(admission, firstName, lastName, birthDate).toLowerCase();
     const studentIdentity = [firstName, lastName, birthDate].map(normaliseKey).join("|");
     const className = value(row.raw, "className");
     const levelText = value(row.raw, "schoolType").toUpperCase();
@@ -166,7 +181,7 @@ export function StudentImportPage() {
           item.admissionNumber.toLowerCase() === admission.toLowerCase(),
       )
     )
-      errors.push("Admission number already exists");
+      errors.push("This admission number is already in the school records. Search for it before importing again.");
     if (
       firstName &&
       lastName &&
@@ -177,8 +192,10 @@ export function StudentImportPage() {
             .map(normaliseKey)
             .join("|") === studentIdentity,
       )
-    )
-      errors.push("Student already exists");
+      )
+      errors.push("A student with this name and date of birth is already in the school records.");
+    if (state.students.some((item) => item.email?.trim().toLowerCase() === importEmail))
+      errors.push("This student appears to have been imported before. Check the selected session and class before importing again.");
     if (
       admission &&
       allRows.some(
@@ -217,6 +234,9 @@ export function StudentImportPage() {
     const email = value(row.raw, "guardianEmail");
     if (email && !/^\S+@\S+\.\S+$/.test(email))
       errors.push("Invalid guardian email");
+    for (const [label, url] of [["Student", value(row.raw, "studentPhotoUrl")], ["Guardian", value(row.raw, "guardianPhotoUrl")]] as const) {
+      if (url && !/^https?:\/\/\S+$/i.test(url)) errors.push(`${label} photo URL must start with http:// or https://`);
+    }
     const phone = value(row.raw, "guardianPhone");
     if (phone && !/^\+?[0-9 ()-]{7,20}$/.test(phone))
       errors.push("Invalid guardian phone");
@@ -292,6 +312,11 @@ export function StudentImportPage() {
   };
 
   const importValid = async () => {
+    if (!selectedSession) {
+      setImportError("Select an academic session before importing students.");
+      toast("Select an academic session before importing.", "warning");
+      return;
+    }
     const validRows = assessed.filter(
       (item) => !item.excluded && !item.validation.errors.length,
     );
@@ -349,6 +374,7 @@ export function StudentImportPage() {
               phone: phone || "Not provided",
               email: email || undefined,
               address: undefined,
+              photoUrl: value(row.raw, "guardianPhotoUrl") || undefined,
               isPrimaryContact: true,
               isEmergencyContact: true,
             });
@@ -375,10 +401,16 @@ export function StudentImportPage() {
               : value(row.raw, "gender")
                 ? "Male"
                 : undefined,
-          email: importStudentEmail(value(row.raw, "admissionNumber"), row.rowNumber),
+          email: importStudentEmail(
+            value(row.raw, "admissionNumber"),
+            value(row.raw, "firstName"),
+            value(row.raw, "lastName"),
+            value(row.raw, "dateOfBirth"),
+          ),
           dateOfBirth: value(row.raw, "dateOfBirth") || undefined,
           admissionDate: value(row.raw, "admissionDate") || undefined,
           address: value(row.raw, "address") || undefined,
+          photoUrl: value(row.raw, "studentPhotoUrl") || undefined,
           schoolLevel: level,
           classId: schoolClass.id,
           guardianIds: guardian?.id ? [guardian.id] : [],
@@ -398,13 +430,16 @@ export function StudentImportPage() {
         if (value(row.raw, "dateOfBirth")) importedStudents.add(studentKey);
         imported += 1;
       } catch (caught) {
-        const message = caught instanceof Error ? caught.message : "Student import failed.";
-        failedRows.push(`Row ${row.rowNumber}: ${message}`);
+        failedRows.push(`Row ${row.rowNumber}: ${friendlyImportError(caught)}`);
       }
     }
-    const errorCount = assessed.filter(
-      (item) => item.validation.errors.length,
-    ).length;
+    const reviewRows = [
+      ...assessed
+        .filter((item) => item.validation.errors.length)
+        .map((item) => `Row ${item.rowNumber}: ${item.validation.errors.join("; ")}`),
+      ...failedRows,
+    ];
+    const errorCount = reviewRows.length;
     const warningCount = assessed.filter(
       (item) => item.validation.warnings.length,
     ).length;
@@ -412,41 +447,43 @@ export function StudentImportPage() {
       total: rows.length,
       imported,
       skipped: rows.length - imported,
-      errors: errorCount + failedRows.length,
+      errors: errorCount,
       warnings: warningCount,
       newGuardians,
       existingGuardians,
     });
-    setRowErrors(failedRows);
+    setRowErrors(reviewRows);
     if (imported > 0) {
       setStep("SUMMARY");
-      toast(failedRows.length ? `${imported} student(s) imported. ${failedRows.length} row(s) failed.` : `${imported} students imported successfully.`, failedRows.length ? "warning" : "success");
+      toast(reviewRows.length ? `${imported} added; ${reviewRows.length} need attention. See the import summary.` : `${imported} students imported successfully.`, reviewRows.length ? "warning" : "success");
     } else {
-      const detail = failedRows.join("\n") || "No students were imported.";
-      setImportError(detail);
-      toast(detail, "error");
+      setStep("SUMMARY");
+      setImportError("No students were imported. Review the row guidance below, then correct the file or check the selected session.");
+      toast(`No students imported; ${reviewRows.length} row(s) need attention. See the import summary.`, "error");
     }
     setImporting(false);
   };
 
-  const template = `${fields.join(",")}\n,Chidera,,Okafor,Male,2013-05-14,Secondary,JSS1,2026-09-01,Ifeanyi Okafor,Father,08061102044,parent@example.com,12 School Road,ACTIVE`;
-
   return (
     <div className="w-full min-w-0 max-w-full">
       <PageHeader
-        title="Import Students"
+        title="Import Enrolled Students"
         description="Upload, map, review and validate student records before importing."
         action={
           <Button
             type="button"
             variant="outline"
-            onClick={() => download("schoolos-student-import-template.csv", template)}
+            onClick={() => downloadCsvFile(STUDENT_IMPORT_TEMPLATE_FILENAME, STUDENT_IMPORT_TEMPLATE)}
           >
             <Download size={16} />
             Download Import Template
           </Button>
         }
       />
+      <p className="mb-5 rounded-xl border bg-surface-muted p-3 text-sm text-muted">
+        Import target: <strong className="text-foreground">{selectedSession?.name ?? "No session selected"}</strong>
+        {selectedTerm && <> · {selectedTerm.name.toLowerCase()} term</>}. Student class enrollment follows the selected session; term-based records are managed separately.
+      </p>
       <div className="mb-5 flex max-w-full gap-2 overflow-x-auto">
         {["UPLOAD", "MAP", "PREVIEW", "SUMMARY"].map((item, index) => (
           <div
@@ -467,14 +504,14 @@ export function StudentImportPage() {
           <Upload className="mx-auto text-muted" size={32} />
           <h2 className="mt-3 font-semibold">Upload student file</h2>
           <p className="mt-1 text-sm text-muted">
-            CSV, XLSX or XLS · Files are reviewed before import.
+            CSV files are reviewed before import.
           </p>
           <label className="mt-5 inline-flex min-h-11 cursor-pointer items-center rounded-[10px] bg-[var(--school-primary)] px-4 text-sm font-semibold text-[var(--school-primary-foreground)]">
             Choose File
             <input
               className="sr-only"
               type="file"
-              accept=".csv,.xlsx,.xls"
+              accept=".csv,text/csv"
               onChange={(event) => void upload(event.target.files?.[0])}
             />
           </label>
@@ -562,7 +599,7 @@ export function StudentImportPage() {
             <Button type="button" variant="outline" onClick={() => setStep("MAP")}>Back to Mapping</Button>
             <div className="flex flex-wrap gap-2">
               {assessed.some((item) => item.validation.errors.length) && (
-                <Button type="button" variant="outline" onClick={() => download("schoolos-student-import-errors.csv", `row,errors\n${assessed.filter((item) => item.validation.errors.length).map((item) => `${item.rowNumber},"${item.validation.errors.join("; ")}"`).join("\n")}`)}>
+                <Button type="button" variant="outline" onClick={() => downloadCsvFile("schoolos-student-import-errors.csv", `row,errors\r\n${assessed.filter((item) => item.validation.errors.length).map((item) => `${item.rowNumber},${csvCell(item.validation.errors.join("; "))}`).join("\r\n")}`)}>
                   Download Error Report
                 </Button>
               )}
@@ -576,7 +613,8 @@ export function StudentImportPage() {
 
       {step === "SUMMARY" && (
         <section className="rounded-xl border bg-surface p-5">
-          <h2 className="text-lg font-bold">Import Complete</h2>
+          <h2 className="text-lg font-bold">{summary.imported ? "Import Complete" : "Import Needs Attention"}</h2>
+          {importError && <p role="alert" className="mt-2 text-sm text-muted">{importError}</p>}
           <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {Object.entries(summary).map(([label, count]) => (
               <div key={label} className="rounded-xl bg-surface-muted p-4">
@@ -589,8 +627,15 @@ export function StudentImportPage() {
             <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-warning">
               <h3 className="font-semibold">Rows needing attention</h3>
               <ul className="mt-2 list-disc space-y-1 pl-5">
-                {rowErrors.map((item) => <li key={item}>{item}</li>)}
+                {rowErrors.slice(0, 5).map((item) => <li key={item}>{item}</li>)}
               </ul>
+              {rowErrors.length > 5 && <p className="mt-2">And {rowErrors.length - 5} more row(s). Download the report for all details.</p>}
+              <Button className="mt-3" type="button" variant="outline" onClick={() => downloadCsvFile("schoolos-student-import-results.csv", `row,issue\r\n${rowErrors.map((item) => {
+                const match = item.match(/^Row (\d+):\s*(.*)$/);
+                return `${match?.[1] ?? ""},${csvCell(match?.[2] ?? item)}`;
+              }).join("\r\n")}`)}>
+                Download Row Report
+              </Button>
             </div>
           )}
           <div className="mt-5 flex flex-wrap gap-2">
