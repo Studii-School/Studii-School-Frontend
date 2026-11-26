@@ -8,7 +8,7 @@ import type { AdminAttendanceEntryInput,AttendanceRegister,SaveAttendanceInput }
 import { useAcademicPeriod } from "@/features/academic-period/academic-period-context";
 import { filterAttendanceByPeriod, filterAttendanceBySession } from "./attendance.utils";
 export function AttendanceProvider({ children }: { children: React.ReactNode }) {
-  const { scope: period, selectedSession } = useAcademicPeriod();
+  const { scope: period } = useAcademicPeriod();
   const [registers, setRegisters] = useState<AttendanceRegister[]>([]);
   const [isLoading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
@@ -72,12 +72,10 @@ export function AttendanceProvider({ children }: { children: React.ReactNode }) 
   }, [refresh]);
 
   const scopedRegisters = useMemo(() => filterAttendanceByPeriod(registers, period), [period, registers]);
+  // Both repositories already scope records to the signed-in school.
   const sessionRegisters = useMemo(() => filterAttendanceBySession(registers, {
-    schoolId: period.schoolId,
     academicSessionId: period.academicSessionId,
-    startDate: selectedSession?.startDate,
-    endDate: selectedSession?.endDate,
-  }), [period.schoolId, period.academicSessionId, registers, selectedSession?.startDate, selectedSession?.endDate]);
+  }), [period.academicSessionId, registers]);
   const value = useMemo(() => ({ registers: scopedRegisters, sessionRegisters, isLoading, error, saveDraft, submit, reopen, correctEntry, refresh }), [scopedRegisters, sessionRegisters, isLoading, error, saveDraft, submit, reopen, correctEntry, refresh]);
   return <AttendanceContext.Provider value={value}>{children}</AttendanceContext.Provider>;
 }

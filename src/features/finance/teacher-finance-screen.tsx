@@ -6,7 +6,9 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
 import { formatNaira } from "@/lib/currency";
+import { formatDateTime } from "@/lib/date-utils";
 import { readStoredUser } from "@/lib/auth";
 import { useFinance } from "./finance-context";
 import type { StaffFinanceEntry } from "./finance.types";
@@ -60,8 +62,8 @@ export function TeacherFinanceScreen() {
         <p className="mt-4 max-w-md text-sm opacity-90">{loading ? "Loading your payroll records." : status.detail}</p>
       </Card>
       <Card className="flex flex-col justify-between rounded-2xl p-6">
-        <div><div className="flex items-center gap-2 text-sm text-muted"><CalendarDays size={16} /> Payroll month</div>
-          <select aria-label="Payroll month" className="mt-3 w-full rounded-lg border bg-surface px-3 py-2 font-semibold" value={month} onChange={(event) => setMonth(event.target.value)}>{months.map((value) => <option key={value} value={value}>{monthLabel(value)}</option>)}</select>
+        <div><div className="flex items-center gap-2 text-sm text-muted"><CalendarDays size={16} className="text-[var(--school-secondary-ink)]" /> Payroll month</div>
+          <Select className="mt-3" label="Payroll month" value={month} onChange={setMonth} options={months.map((value) => ({ value, label: monthLabel(value) }))}/>
         </div>
         <div className="mt-5 flex items-center justify-between gap-3 border-t pt-4"><span className="text-sm text-muted">Payment status</span><Badge tone={status.tone}>{status.label}</Badge></div>
       </Card>
@@ -75,7 +77,7 @@ export function TeacherFinanceScreen() {
 
     <Card id="staff-payslip" className="rounded-2xl p-5 sm:p-7">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex items-start gap-3"><ReceiptText className="mt-0.5 text-[var(--school-primary)]" size={21} /><div><h2 className="text-lg font-semibold">Payslip · {monthLabel(month)}</h2><p className="mt-1 text-sm text-muted">A clear breakdown of this month&apos;s salary.</p></div></div>
+        <div className="flex items-start gap-3"><ReceiptText className="mt-0.5 text-[var(--school-accent-ink)]" size={21} /><div><h2 className="text-lg font-semibold">Payslip · {monthLabel(month)}</h2><p className="mt-1 text-sm text-muted">A clear breakdown of this month&apos;s salary.</p></div></div>
         <Button className="payslip-hide" variant="outline" disabled={!salary} onClick={() => window.print()}><Printer size={16} /> Print or save PDF</Button>
       </div>
       {salary ? <>
@@ -85,7 +87,7 @@ export function TeacherFinanceScreen() {
         </div>
         <div className="mt-5 flex flex-wrap items-end justify-between gap-3"><div><p className="text-sm text-muted">Net salary</p><p className="mt-1 text-2xl font-bold">{formatNaira(netPay)}</p></div><Badge tone={status.tone}>{status.label}</Badge></div>
         {bonuses.length > 0 && <div className="mt-5 border-t pt-4"><p className="text-sm font-semibold">Other payments</p>{bonuses.map((entry) => <div key={entry.id} className="mt-2 flex justify-between gap-3 text-sm"><span>{entry.title}</span><strong>{formatNaira(entry.amount)}</strong></div>)}</div>}
-        {salary.status === "PAID" && <div className="mt-5 grid gap-2 rounded-xl bg-surface-muted p-4 text-sm sm:grid-cols-2"><p><span className="text-muted">Paid on:</span> {salary.paidAt || "Date not recorded"}</p><p><span className="text-muted">Method:</span> {salary.paymentMethod || "Not recorded"}</p><p className="sm:col-span-2"><span className="text-muted">Reference:</span> {salary.paymentReference || "Not recorded"}</p></div>}
+        {salary.status === "PAID" && <div className="mt-5 grid gap-2 rounded-xl bg-surface-muted p-4 text-sm sm:grid-cols-2"><p><span className="text-muted">Paid on:</span> {salary.paidAt ? formatDateTime(salary.paidAt) : "Date not recorded"}</p><p><span className="text-muted">Method:</span> {salary.paymentMethod || "Not recorded"}</p><p className="sm:col-span-2"><span className="text-muted">Reference:</span> {salary.paymentReference || "Not recorded"}</p></div>}
       </> : <div className="mt-6 rounded-xl bg-surface-muted p-6 text-sm text-muted">No payslip has been prepared for {monthLabel(month)}. It will appear here when the school prepares payroll.</div>}
     </Card>
 

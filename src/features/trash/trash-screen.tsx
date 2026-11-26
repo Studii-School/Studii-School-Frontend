@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Inbox, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
+import { Inbox, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { useActionFeedback } from "@/features/action-feedback/action-feedback-co
 import { useAcademicPeriod } from "@/features/academic-period/academic-period-context";
 import { dateBelongsToPeriod } from "@/features/academic-period/period-scope-utils";
 import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
+import { formatDate, formatDateTime } from "@/lib/date-utils";
 import { getTrash, restoreTrashRecord, type TrashRecord, type TrashResponse } from "./trash.repository";
 
 const labels: Record<string, string> = {
@@ -27,10 +28,6 @@ const labels: Record<string, string> = {
   other: "Other",
 };
 
-function formatDate(value: string) {
-  return new Date(value).toLocaleDateString([], { dateStyle: "medium" });
-}
-
 function formatLabel(value: string) {
   return value
     .replace(/([a-z])([A-Z])/g, "$1 $2")
@@ -42,7 +39,7 @@ function formatMetaValue(key: string, value: string | number | boolean | Array<s
   if (Array.isArray(value)) return value.map(String).join(", ");
   if (key.toLowerCase().endsWith("at") || key.toLowerCase().endsWith("date")) {
     const date = new Date(String(value));
-    if (!Number.isNaN(date.valueOf())) return date.toLocaleDateString([], { dateStyle: "medium" });
+    if (!Number.isNaN(date.valueOf())) return key.toLowerCase().endsWith("at") ? formatDateTime(date) : formatDate(date);
   }
   if (typeof value === "string" && /^[A-Z0-9_ -]+$/.test(value)) return formatLabel(value.toLowerCase());
   return String(value);
@@ -158,6 +155,8 @@ export function TrashScreen() {
       <PageHeader
         title="Trash"
         description="Deleted records are kept for 3 months, then removed automatically."
+        showBack={Boolean(selected)}
+        onBack={() => { setSelected(""); void load(""); }}
         action={<Button variant="outline" onClick={() => void load()} disabled={loading}><RefreshCw size={16} />Refresh</Button>}
       />
       {error && <p role="alert" className="mb-4 rounded-[8px] border border-danger/20 bg-red-50 p-3 text-sm text-danger">{error}</p>}
@@ -181,7 +180,6 @@ export function TrashScreen() {
         </div>
       ) : (
         <>
-          <Button className="mb-4" type="button" variant="outline" onClick={() => { setSelected(""); void load(""); }}><ArrowLeft size={16} />Back to trash groups</Button>
           <div className="grid gap-4">
             {periodRecords.map((item) => (
               <Card key={item.id} className="p-5">

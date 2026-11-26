@@ -7,7 +7,10 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { SectionCard } from "@/components/dashboard/section-card";
 import { SearchInput } from "@/components/shared/search-input";
 import { Badge } from "@/components/ui/badge";
+import { BrandIcon } from "@/components/ui/brand-icon";
 import { ClickableTableRow } from "@/components/ui/clickable-table-row";
+import { RowActionSelect } from "@/components/ui/row-action-select";
+import { TablePagination, usePaginatedRows } from "@/components/ui/table-pagination";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -48,19 +51,18 @@ export function AdminAcademicsLanding() {
   const activeClasses = state.classes.filter((item) => item.status === "ACTIVE");
   const cards = [
     { title: "Classes", description: "Class arms, capacity and teachers", href: "/admin/academics/classes", icon: GraduationCap, value: activeClasses.length },
-    { title: "Teacher assignments", description: "Class and subject access", href: "/admin/staff/assignments", icon: UserRoundCog, value: state.teacherAssignments.length },
     { title: "Students by class", description: "Open class cards before student lists", href: "/admin/students", icon: Users, value: state.students.length },
     { title: "Subjects", description: "Subjects and teaching coverage", href: "/admin/settings", icon: BookOpen, value: state.subjects.filter((item) => item.status === "ACTIVE").length },
   ];
   return (
     <>
       <PageHeader title="Academics" description="Choose an academic area, then work inside its focused view." />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {cards.map(({ title, description, href, icon: Icon, value }) => (
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {cards.map(({ title, description, href, icon: Icon, value }, index) => (
           <Link key={title} href={href} className="min-h-40 rounded-[8px] border bg-surface p-4 transition hover:border-[var(--school-primary)] hover:shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div><h2 className="font-semibold">{title}</h2><p className="mt-1 text-sm text-muted">{description}</p></div>
-              <span className="rounded-[8px] bg-surface-muted p-2 text-[var(--school-primary)]"><Icon size={18} /></span>
+              <BrandIcon tone={(["primary", "secondary", "accent", "secondary"] as const)[index]} className="size-10"><Icon size={18} /></BrandIcon>
             </div>
             <p className="mt-6 text-2xl font-bold">{value}</p>
           </Link>
@@ -134,6 +136,7 @@ export function AdminClassesScreen() {
   const [status, setStatus] = useState("");
   const [teacher, setTeacher] = useState("");
   const visible = state.classes.filter((item) => settings.schoolLevels.includes(item.level) && (!level || item.level === level) && (!status || item.status === status) && (!teacher || item.classTeacherUserId === teacher) && matchesSearch(query, item.displayName, item.arm, getTeacherByUserId(state, item.classTeacherUserId ?? "")?.firstName, ...getTeachersByClass(state, item.id).map((person) => teacherName(person.firstName, person.lastName))));
+  const pagination = usePaginatedRows(visible, `${query}|${level}|${status}|${teacher}`);
   useEffect(() => {
     const classId = new URLSearchParams(window.location.search).get("class");
     if (classId) setEditingClassId(classId);
@@ -144,7 +147,7 @@ export function AdminClassesScreen() {
   const openEditForm = (id: string) => { setEditingClassId(id); setForm(true); };
   const deleteClass = (id: string, name: string, studentCount: number) => confirm({ title: `Delete ${name}?`, description: studentCount > 0 ? `This class has ${studentCount} student(s). The backend will decide whether deletion is allowed; local fallback archives classes with linked records.` : "This removes the class from the school class list.", confirmLabel: "Delete class", destructive: true, onConfirm: async () => { const result = await removeClass(id); toast(result === "REMOVED" ? `${name} deleted.` : `${name} has linked records, so it was archived.`, result === "REMOVED" ? "success" : "warning"); } });
   if (isLoading) return <div className="h-48 animate-pulse rounded-xl bg-surface-muted" aria-label="Loading classes" />;
-  return <><PageHeader title="Classes" description="Manage class structures, arms, capacity and teacher access." action={<Button onClick={openCreateForm}><Plus size={16}/>Create Class</Button>}/><Modal open={form || Boolean(editingClass)} title={editingClass ? `Edit ${editingClass.displayName}` : "Create class"} description="Set the class structure, capacity and teacher access." maxWidth="xl" onClose={closeForm}><ClassForm key={editingClass?.id ?? "new"} existing={editingClass} onDone={closeForm}/></Modal><div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4"><SearchInput value={query} onChange={setQuery} placeholder="Search class or teacher"/><Select clearable label="Filter school level" value={level} onChange={setLevel} placeholder="All school levels" options={levelOptions.filter((item) => settings.schoolLevels.includes(item.value as SchoolLevel))}/><Select clearable label="Filter class status" value={status} onChange={setStatus} placeholder="All statuses" options={statusOptions}/><Select searchable clearable label="Filter class teacher" value={teacher} onChange={setTeacher} placeholder="All class teachers" options={state.teachers.map((item) => ({ value: item.userId, label: teacherName(item.firstName, item.lastName) }))}/></div><SectionCard title="School classes" description={`${visible.length} result(s)`}><div className="overflow-x-auto"><table className="w-full min-w-[1100px] text-left text-sm"><thead className="bg-surface-muted text-xs uppercase text-muted"><tr>{["Class", "Level", "Arm", "Students", "Capacity", "Class teacher", "Assigned teachers", "Status", "Actions"].map((item) => <th key={item} className="px-4 py-3">{item}</th>)}</tr></thead><tbody className="divide-y">{visible.map((item) => { const classTeacher = getTeacherByUserId(state, item.classTeacherUserId ?? ""); return <ClickableTableRow key={item.id} href={`/admin/academics/classes/${item.id}`} label={item.displayName}><td className="px-4 py-3 font-semibold">{item.displayName}</td><td className="px-4 py-3">{item.level}</td><td className="px-4 py-3">{item.arm ?? "-"}</td><td className="px-4 py-3">{item.studentIds.length}</td><td className="px-4 py-3">{item.capacity ?? "-"}</td><td className="px-4 py-3">{classTeacher ? <PersonNameLink kind="staff" id={classTeacher.userId}>{teacherName(classTeacher.firstName, classTeacher.lastName)}</PersonNameLink> : "Unassigned"}</td><td className="px-4 py-3">{getTeachersByClass(state, item.id).length}</td><td className="px-4 py-3"><Badge tone={item.status === "ACTIVE" ? "success" : item.status === "INACTIVE" ? "warning" : "neutral"}>{item.status}</Badge></td><td className="px-4 py-3"><div className="flex gap-2"><Link href={`/admin/academics/classes/${item.id}`} className="inline-flex items-center gap-1 font-semibold text-[var(--school-primary)]"><Eye size={14}/>View</Link><button className="inline-flex items-center gap-1 text-muted" onClick={() => openEditForm(item.id)}><Pencil size={14}/>Edit</button><button className="inline-flex items-center gap-1 text-muted" onClick={() => deleteClass(item.id, item.displayName, item.studentIds.length)}><Trash2 size={14}/>Delete</button></div></td></ClickableTableRow>; })}</tbody></table>{!visible.length && <p className="p-8 text-center text-sm text-muted">No classes match the current filters.</p>}</div></SectionCard></>;
+  return <><PageHeader title="Classes" description="Manage class structures, arms, capacity and teacher access." action={<Button onClick={openCreateForm}><Plus size={16}/>Create Class</Button>}/><Modal open={form || Boolean(editingClass)} title={editingClass ? `Edit ${editingClass.displayName}` : "Create class"} description="Set the class structure, capacity and teacher access." maxWidth="xl" onClose={closeForm}><ClassForm key={editingClass?.id ?? "new"} existing={editingClass} onDone={closeForm}/></Modal><div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4"><SearchInput value={query} onChange={setQuery} placeholder="Search class or teacher"/><Select clearable label="Filter school level" value={level} onChange={setLevel} placeholder="All school levels" options={levelOptions.filter((item) => settings.schoolLevels.includes(item.value as SchoolLevel))}/><Select clearable label="Filter class status" value={status} onChange={setStatus} placeholder="All statuses" options={statusOptions}/><Select searchable clearable label="Filter class teacher" value={teacher} onChange={setTeacher} placeholder="All class teachers" options={state.teachers.map((item) => ({ value: item.userId, label: teacherName(item.firstName, item.lastName) }))}/></div><SectionCard title="School classes" description={`${visible.length} result(s)`}><div className="overflow-x-auto"><table className="w-full min-w-[1100px] text-left text-sm"><thead className="bg-surface-muted text-xs uppercase text-muted"><tr>{["Class", "Level", "Arm", "Students", "Capacity", "Class teacher", "Assigned teachers", "Status", "Actions"].map((item) => <th key={item} className="px-4 py-3">{item}</th>)}</tr></thead><tbody className="divide-y">{pagination.rows.map((item) => { const classTeacher = getTeacherByUserId(state, item.classTeacherUserId ?? ""); return <ClickableTableRow key={item.id} href={`/admin/academics/classes/${item.id}`} label={item.displayName}><td className="px-4 py-3 font-semibold">{item.displayName}</td><td className="px-4 py-3">{item.level}</td><td className="px-4 py-3">{item.arm ?? "-"}</td><td className="px-4 py-3">{item.studentIds.length}</td><td className="px-4 py-3">{item.capacity ?? "-"}</td><td className="px-4 py-3">{classTeacher ? <PersonNameLink kind="staff" id={classTeacher.userId}>{teacherName(classTeacher.firstName, classTeacher.lastName)}</PersonNameLink> : "Unassigned"}</td><td className="px-4 py-3">{getTeachersByClass(state, item.id).length}</td><td className="px-4 py-3"><Badge tone={item.status === "ACTIVE" ? "success" : item.status === "INACTIVE" ? "warning" : "neutral"}>{item.status}</Badge></td><td className="px-4 py-3"><RowActionSelect label={`Actions for ${item.displayName}`} actions={[{ label: "Edit", onSelect: () => openEditForm(item.id) }, { label: "Delete", onSelect: () => deleteClass(item.id, item.displayName, item.studentIds.length) }]} /></td></ClickableTableRow>; })}</tbody></table>{!visible.length && <p className="p-8 text-center text-sm text-muted">No classes match the current filters.</p>}</div></SectionCard><TablePagination label="Classes" total={pagination.total} page={pagination.page} pageCount={pagination.pageCount} pageSize={pagination.pageSize} start={pagination.start} onPageChange={pagination.setPage} onPageSizeChange={pagination.setPageSize} /></>;
 }
 
 export function AdminStudentsScreen() {
@@ -162,7 +165,7 @@ export function AdminStudentsScreen() {
 export function TeacherAssignmentAdminScreen({ initialTeacherUserId = "" }: { initialTeacherUserId?: string }) {
   const { state, saveTeacherAssignments } = useAcademics();
   const { toast } = useActionFeedback();
-  const [teacherId, setTeacherId] = useState(initialTeacherUserId); const [classId, setClassId] = useState(""); const [classTeacher, setClassTeacher] = useState(false); const [subjects, setSubjects] = useState<string[]>([]); const [query, setQuery] = useState(""); const [editingAssignment, setEditingAssignment] = useState(false); const [assignmentPolicy, setAssignmentPolicy] = useState<"CO" | "MAIN" | "REPLACE">("CO");
+  const [teacherId, setTeacherId] = useState(initialTeacherUserId); const [classId, setClassId] = useState(""); const [classTeacher, setClassTeacher] = useState(false); const [subjects, setSubjects] = useState<string[]>([]); const [query, setQuery] = useState(""); const [assignmentPanel, setAssignmentPanel] = useState<"new" | "edit" | null>(null); const [assignmentPolicy, setAssignmentPolicy] = useState<"CO" | "MAIN" | "REPLACE">("CO");
   const selectedClass = getClassById(state, classId);
   const existingForClass = state.teacherAssignments.filter((item) => item.classId === classId && item.teacherUserId !== teacherId);
   const conflicts = existingForClass.filter((item) =>
@@ -175,7 +178,7 @@ export function TeacherAssignmentAdminScreen({ initialTeacherUserId = "" }: { in
     .map((item) => ({ value: item.id, label: item.name, description: item.code ? `${item.level} · ${item.code}` : item.level }));
   const updateClass = (value: string) => { setClassId(value); const assignments = state.teacherAssignments.filter((item) => item.teacherUserId === teacherId && item.classId === value); setClassTeacher(assignments.some((item) => item.assignmentType === "CLASS_TEACHER")); setSubjects([...new Set(assignments.flatMap((item) => item.subjectIds))]); };
   const updateTeacher = (value: string) => { setTeacherId(value); setClassId(""); setClassTeacher(false); setSubjects([]); };
-  const save = async () => { try { const assignmentType: TeacherClassAssignmentType = classTeacher ? "CLASS_TEACHER" : subjects.length ? "SUBJECT_TEACHER" : "GENERAL_ACCESS"; const count = await saveTeacherAssignments({ teacherUserId: teacherId, classIds: [classId], assignmentType, subjectIds: subjects, subjectAssignments: [{ classId, subjectIds: subjects }], assignmentPolicy, assignmentSnapshot: state.teacherAssignments.filter((item) => item.classId === classId && !item.isRemoved) }); toast(`${count} teacher assignment(s) saved.`, "success"); setEditingAssignment(false); } catch (caught) { toast(caught instanceof Error ? caught.message : "Assignments could not be saved.", "error"); } };
+  const save = async () => { try { const assignmentType: TeacherClassAssignmentType = classTeacher ? "CLASS_TEACHER" : subjects.length ? "SUBJECT_TEACHER" : "GENERAL_ACCESS"; const count = await saveTeacherAssignments({ teacherUserId: teacherId, classIds: [classId], assignmentType, subjectIds: subjects, subjectAssignments: [{ classId, subjectIds: subjects }], assignmentPolicy, assignmentSnapshot: state.teacherAssignments.filter((item) => item.classId === classId && !item.isRemoved) }); toast(`${count} teacher assignment(s) saved.`, "success"); setAssignmentPanel(null); } catch (caught) { toast(caught instanceof Error ? caught.message : "Assignments could not be saved.", "error"); } };
   const teacherLabel = (userId: string) => { const item = getTeacherByUserId(state, userId); return item ? teacherName(item.firstName, item.lastName) : "Teacher"; };
   const existingAssignmentSummary = (assignment: TeacherClassAssignment) => {
     const role = assignment.assignmentType === "CLASS_TEACHER" ? "Class owner" : assignment.assignmentType === "SUBJECT_TEACHER" ? assignment.subjectIds.map((subjectId) => state.subjects.find((item) => item.id === subjectId)?.name).filter(Boolean).join(", ") : "Class access";
@@ -208,7 +211,8 @@ export function TeacherAssignmentAdminScreen({ initialTeacherUserId = "" }: { in
     const assignments = state.teacherAssignments.filter((item) => item.teacherUserId === nextTeacherId && item.classId === nextClassId);
     setClassTeacher(assignments.some((item) => item.assignmentType === "CLASS_TEACHER"));
     setSubjects([...new Set(assignments.flatMap((item) => item.subjectIds))]);
-    setEditingAssignment(true);
+    setAssignmentPolicy("CO");
+    setAssignmentPanel("edit");
   };
   const roleLabel = (types: TeacherClassAssignmentType[]) => {
     if (types.includes("CLASS_TEACHER")) return "Class teacher";
@@ -216,9 +220,10 @@ export function TeacherAssignmentAdminScreen({ initialTeacherUserId = "" }: { in
     return "Class access";
   };
   return <>
-    <PageHeader title="Class and subject access" description="See every teacher and the classes and subjects assigned to them."/>
-    <Modal open={editingAssignment} title="Edit teacher assignment" description="Update the teacher, class and subject access for this assignment." maxWidth="xl" onClose={() => setEditingAssignment(false)}>
-      <div className="grid gap-4 sm:grid-cols-2">
+    <PageHeader title="Teacher assignments" description="Manage class teachers, subject teachers and classroom access in one place." action={<Button onClick={() => { setTeacherId(initialTeacherUserId); setClassId(""); setClassTeacher(false); setSubjects([]); setAssignmentPolicy("CO"); setAssignmentPanel("new"); }}><Plus size={16}/>Assign teacher</Button>}/>
+    <Modal open={assignmentPanel !== null} title={assignmentPanel === "edit" ? "Edit assignment" : "Assign a teacher"} description="Choose a teacher and class, then set their classroom access." maxWidth="lg" onClose={() => setAssignmentPanel(null)}>
+      <div className="mb-5 rounded-xl bg-primary-light p-4 text-sm text-[var(--school-primary)]">Select the teacher and class first. Then choose whether they own the class, teach subjects, or just need class access.</div>
+      <div className="grid gap-5">
         <div>
           <p className="mb-2 text-sm font-medium">Teacher</p>
           <Select searchable label="Teacher" value={teacherId} onChange={updateTeacher} placeholder="Select teacher" emptyMessage="No teachers found." options={state.teachers.map((item) => ({ value: item.userId, label: teacherName(item.firstName, item.lastName), description: item.staffId }))}/>
@@ -227,51 +232,31 @@ export function TeacherAssignmentAdminScreen({ initialTeacherUserId = "" }: { in
           <p className="mb-2 text-sm font-medium">Class</p>
           <Select searchable label="Class" value={classId} onChange={updateClass} placeholder="Select class" emptyMessage="No active classes found." options={state.classes.filter((item) => item.status === "ACTIVE").map((item) => ({ value: item.id, label: item.displayName }))}/>
         </div>
-        <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={classTeacher} onChange={(event) => setClassTeacher(event.target.checked)} />Class teacher</label>
-        <div className="sm:col-span-2">
+        <label className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border bg-surface-muted p-4 text-sm"><span><span className="block font-semibold">Class teacher</span><span className="mt-1 block text-xs text-muted">Give this teacher responsibility for the class.</span></span><input type="checkbox" className="size-5 shrink-0 accent-[var(--school-primary)]" checked={classTeacher} onChange={(event) => setClassTeacher(event.target.checked)} /></label>
+        <div>
           <p className="mb-2 text-sm font-medium">Subjects for selected class</p>
           <MultiSelect searchable label="Subjects for selected class" placeholder="Select subjects" emptyMessage={classId ? "No subjects found for this class." : "Select a class first."} values={subjects} onChange={setSubjects} options={subjectOptions}/>
         </div>
       </div>
       {conflicts.length > 0 && <div className="mt-4 rounded-xl border bg-surface-muted p-4 sm:col-span-2"><p className="text-sm font-semibold">Already assigned to this class or subject</p><ul className="mt-2 space-y-1 text-sm text-muted">{conflicts.map((item) => <li key={item.id}>{existingAssignmentSummary(item)}</li>)}</ul><label className="mt-4 block text-sm font-medium">How should the new assignment work?<Select className="mt-2" label="Assignment change" value={assignmentPolicy} onChange={(value) => setAssignmentPolicy(value as "CO" | "MAIN" | "REPLACE")} options={[{ value: "CO", label: classTeacher && conflicts.some((item) => item.assignmentType === "CLASS_TEACHER") ? "Add as co-class owner / co-teacher" : "Add as co-teacher" }, { value: "MAIN", label: "Make this teacher the main teacher" }, { value: "REPLACE", label: "Replace the currently assigned teacher" }]}/></label></div>}
-      <div className="mt-5 flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setEditingAssignment(false)}>Cancel</Button><Button disabled={!teacherId || !classId} onClick={() => void save()}><UserRoundCog size={16}/>Save assignment</Button></div>
+      {classId && conflicts.length === 0 && <p className="mt-4 text-xs text-muted">Leave subjects empty to grant class access only.</p>}
+      <div className="mt-6 flex justify-end gap-2 border-t pt-5"><Button type="button" variant="outline" onClick={() => setAssignmentPanel(null)}>Cancel</Button><Button disabled={!teacherId || !classId} onClick={() => void save()}><UserRoundCog size={16}/>Save assignment</Button></div>
     </Modal>
-    <Card className="mb-6 p-5">
-      <div className="mb-5"><h2 className="font-semibold">Assign class and subjects</h2><p className="mt-1 text-sm text-muted">Choose a teacher and class, then grant class-teacher or subject access.</p></div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <p className="mb-2 text-sm font-medium">Teacher</p>
-          <Select searchable label="Teacher" value={teacherId} onChange={updateTeacher} placeholder="Select teacher" emptyMessage="No teachers found." options={state.teachers.map((item) => ({ value: item.userId, label: teacherName(item.firstName, item.lastName), description: item.staffId }))}/>
-        </div>
-        <div>
-          <p className="mb-2 text-sm font-medium">Class</p>
-          <Select searchable label="Class" value={classId} onChange={updateClass} placeholder="Select class" emptyMessage="No active classes found." options={state.classes.filter((item) => item.status === "ACTIVE").map((item) => ({ value: item.id, label: item.displayName }))}/>
-        </div>
-        <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={classTeacher} onChange={(event) => setClassTeacher(event.target.checked)} />Class teacher</label>
-        <div className="sm:col-span-2">
-          <p className="mb-2 text-sm font-medium">Subjects for selected class</p>
-          <MultiSelect searchable label="Subjects for selected class" placeholder="Select subjects" emptyMessage={classId ? "No subjects found for this class." : "Select a class first."} values={subjects} onChange={setSubjects} options={subjectOptions}/>
-        </div>
-      </div>
-      {conflicts.length > 0 && <div className="mt-4 rounded-xl border bg-surface-muted p-4"><p className="text-sm font-semibold">Already assigned to this class or subject</p><ul className="mt-2 space-y-1 text-sm text-muted">{conflicts.map((item) => <li key={item.id}>{existingAssignmentSummary(item)}</li>)}</ul><label className="mt-4 block text-sm font-medium">How should the new assignment work?<Select className="mt-2" label="Assignment change" value={assignmentPolicy} onChange={(value) => setAssignmentPolicy(value as "CO" | "MAIN" | "REPLACE")} options={[{ value: "CO", label: classTeacher && conflicts.some((item) => item.assignmentType === "CLASS_TEACHER") ? "Add as co-class owner / co-teacher" : "Add as co-teacher" }, { value: "MAIN", label: "Make this teacher the main teacher" }, { value: "REPLACE", label: "Replace the currently assigned teacher" }]}/></label></div>}
-      <Button className="mt-4" disabled={!teacherId || !classId} onClick={() => void save()}><UserRoundCog size={16}/>Save assignment</Button>
-      {classId && conflicts.length === 0 && <p className="mt-3 text-xs text-muted">No other teacher currently has this class owner role or selected subjects. Leave subjects empty to assign class access only.</p>}
-    </Card>
     <div className="mb-4 max-w-md"><SearchInput value={query} onChange={setQuery} placeholder="Search teacher, class or subject"/></div>
     <SectionCard title="Teacher assignments" description={`${assignmentRows.length} teacher-class assignment${assignmentRows.length === 1 ? "" : "s"} shown`}>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[850px] text-left text-sm">
           <thead className="bg-surface-muted text-xs uppercase text-muted"><tr>{["Teacher", "Class", "Access", "Subjects", "Action"].map((label) => <th key={label} className="px-4 py-3">{label}</th>)}</tr></thead>
           <tbody className="divide-y">{assignmentRows.map((row) => <ClickableTableRow key={`${row.teacherUserId}:${row.classId}`} href={`/admin/staff/${row.teacherUserId}`} label={row.teacher ? teacherName(row.teacher.firstName, row.teacher.lastName) : "teacher assignment"}>
-            <td className="px-4 py-3"><Link className="font-semibold text-[var(--school-primary)]" href={`/admin/staff/${row.teacherUserId}`}>{row.teacher ? teacherName(row.teacher.firstName, row.teacher.lastName) : "Unknown teacher"}</Link><p className="mt-0.5 text-xs text-muted">{row.teacher?.staffId ?? row.teacherUserId}</p></td>
-            <td className="px-4 py-3 font-medium">{row.schoolClass?.displayName ?? "Unknown class"}</td>
-            <td className="px-4 py-3"><Badge tone={row.assignmentTypes.includes("CLASS_TEACHER") ? "primary" : "neutral"}>{roleLabel(row.assignmentTypes)}{row.hasCoRole ? row.hasMainRole ? " · Main + co" : " · Co" : row.hasMainRole ? " · Main" : ""}</Badge></td>
-            <td className="max-w-sm px-4 py-3 text-muted">{row.subjectNames.length ? row.subjectNames.join(", ") : "All class access"}</td>
-            <td className="px-4 py-3"><Button variant="outline" className="min-h-9 px-3" onClick={() => editAssignment(row.teacherUserId, row.classId)}><Pencil size={14}/>Edit</Button></td>
+            <td data-column-label="Teacher" className="px-4 py-3"><Link className="font-semibold text-[var(--school-primary)]" href={`/admin/staff/${row.teacherUserId}`}>{row.teacher ? teacherName(row.teacher.firstName, row.teacher.lastName) : "Unknown teacher"}</Link><p className="mt-0.5 text-xs text-muted">{row.teacher?.staffId ?? row.teacherUserId}</p></td>
+            <td data-column-label="Class" className="px-4 py-3 font-medium">{row.schoolClass?.displayName ?? "Unknown class"}</td>
+            <td data-column-label="Access" className="px-4 py-3"><Badge tone={row.assignmentTypes.includes("CLASS_TEACHER") ? "primary" : "neutral"}>{roleLabel(row.assignmentTypes)}{row.hasCoRole ? row.hasMainRole ? " · Main + co" : " · Co" : row.hasMainRole ? " · Main" : ""}</Badge></td>
+            <td data-column-label="Subjects" className="max-w-sm px-4 py-3 text-muted">{row.subjectNames.length ? row.subjectNames.join(", ") : "All class access"}</td>
+            <td data-column-label="Action" className="px-4 py-3"><Button variant="outline" className="min-h-9 px-3" onClick={() => editAssignment(row.teacherUserId, row.classId)}><Pencil size={14}/>Edit</Button></td>
           </ClickableTableRow>)}</tbody>
         </table>
         {!assignmentRows.length && (
-          <EmptyState title={query ? "No assignments match your search" : "No teacher assignments yet"} description={query ? "Try another teacher, class, or subject name." : "Use the form above to assign a teacher to a class."}/>
+          <EmptyState title={query ? "No assignments match your search" : "No teacher assignments yet"} description={query ? "Try another teacher, class, or subject name." : "Use Assign teacher to grant class or subject access."}/>
         )}
       </div>
     </SectionCard>

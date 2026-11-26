@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Edit3, Plus, Trash2 } from "lucide-react";
+import { Plus } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { Card } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
 import { SearchInput } from "@/components/shared/search-input";
 import { Select } from "@/components/ui/select";
+import { RowActionSelect } from "@/components/ui/row-action-select";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { useAcademics } from "@/features/academics/academics-context";
 import { getClassOptions } from "@/features/academics/academics.class-utils";
@@ -96,7 +97,7 @@ export function AdminAnnouncementsScreen() {
       <Select label="Filter by status" value={status} onChange={(value) => setStatus(value as AnnouncementStatus | "ALL")} options={["ALL", "PUBLISHED", "DRAFT", "ARCHIVED"].map((value) => ({ value, label: value === "ALL" ? "All statuses" : value }))} />
       <Select label="Filter by audience" value={audience} onChange={(value) => setAudience(value as AnnouncementAudience | "ALL")} options={["ALL", "EVERYONE", "STUDENTS", "TEACHERS", "PARENTS", "STAFF", "SELECTED_CLASSES"].map((value) => ({ value, label: value === "ALL" ? "All audiences" : value.replaceAll("_", " ") }))} />
     </div>
-    {isLoading ? <div className="space-y-3">{[1, 2, 3].map((item) => <div key={item} className="h-40 animate-pulse rounded-xl bg-surface-muted" />)}</div> : error ? <p role="alert" className="text-danger">{error}</p> : filtered.length ? <div className="space-y-4">{filtered.map((item) => <AnnouncementCard key={item.id} announcement={item} adminActions={<div className="flex flex-wrap items-center gap-2"><AudienceQuickEdit label={`Audience for ${item.title}`} options={announcementAudienceOptions} everyone="EVERYONE" classesValue="SELECTED_CLASSES" values={item.audiences} selectedClasses={item.selectedClassIds} classOptions={classOptions} disabled={busyId === item.id} onSave={(values, classIds) => saveAudience(item, values, classIds)} /><span className="flex items-center gap-2 rounded-lg border bg-surface-muted/40 px-3 py-2 text-xs font-medium"><span>{item.status === "PUBLISHED" ? "Published" : item.status === "ARCHIVED" ? "Archived" : "Draft"}</span><Switch checked={item.status === "PUBLISHED"} disabled={busyId === item.id} onCheckedChange={() => void toggle(item)} label={`${item.status === "PUBLISHED" ? "Unpublish" : "Publish"} ${item.title}`} /></span><Button variant="outline" onClick={() => setEditing(item)}><Edit3 size={14} />Edit</Button><Button variant="outline" aria-label={`Delete announcement ${item.title}`} onClick={() => remove(item)}><Trash2 size={14} />Delete</Button></div>} />)}</div> : <EmptyState title="No announcements found" description="Adjust the filters or create a new announcement." />}
+    {isLoading ? <div className="space-y-3">{[1, 2, 3].map((item) => <div key={item} className="h-40 animate-pulse rounded-xl bg-surface-muted" />)}</div> : error ? <p role="alert" className="text-danger">{error}</p> : filtered.length ? <div className="space-y-4">{filtered.map((item) => <AnnouncementCard key={item.id} announcement={item} adminActions={<div className="flex flex-wrap items-center gap-2"><AudienceQuickEdit label={`Audience for ${item.title}`} options={announcementAudienceOptions} everyone="EVERYONE" classesValue="SELECTED_CLASSES" values={item.audiences} selectedClasses={item.selectedClassIds} classOptions={classOptions} disabled={busyId === item.id} onSave={(values, classIds) => saveAudience(item, values, classIds)} /><span className="flex items-center gap-2 rounded-lg border bg-surface-muted/40 px-3 py-2 text-xs font-medium"><span>{item.status === "PUBLISHED" ? "Published" : item.status === "ARCHIVED" ? "Archived" : "Draft"}</span><Switch checked={item.status === "PUBLISHED"} disabled={busyId === item.id} onCheckedChange={() => void toggle(item)} label={`${item.status === "PUBLISHED" ? "Unpublish" : "Publish"} ${item.title}`} /></span><RowActionSelect label={`Actions for ${item.title}`} actions={[{ label: "Edit", onSelect: () => setEditing(item) }, { label: "Delete", onSelect: () => remove(item) }]} /></div>} />)}</div> : <EmptyState title="No announcements found" description="Adjust the filters or create a new announcement." />}
   </>;
 }
 

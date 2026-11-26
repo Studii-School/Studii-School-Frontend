@@ -47,26 +47,32 @@
 }
 
 :root {
-  --background: #F8FAFC;
+  --background: #F0F1EF;
   --foreground: #172033;
   --primary: #075985;
   --primary-hover: #0369A1;
   --primary-light: #E0F2FE;
   --secondary: #0F766E;
   --secondary-light: #CCFBF1;
-  --surface: #FFFFFF;
-  --surface-muted: #F1F5F9;
-  --border: #E2E8F0;
+  --surface: #FAFAF9;
+  --surface-muted: #E8EAE7;
+  --border: #D6D9D4;
   --muted: #64748B;
   --success: #15803D;
   --warning: #B45309;
   --danger: #B91C1C;
   --school-primary: #075985;
   --school-primary-foreground: #FFFFFF;
+  --school-primary-ink: #075985;
+  --school-primary-soft: #E6F0F4;
   --school-secondary: #0F766E;
   --school-secondary-foreground: #FFFFFF;
+  --school-secondary-ink: #0F766E;
+  --school-secondary-soft: #E3F1EF;
   --school-accent: #F59E0B;
   --school-accent-foreground: #172033;
+  --school-accent-ink: #865300;
+  --school-accent-soft: #FEF1D9;
 }
 
 @theme inline {
@@ -93,6 +99,13 @@
 * { border-color: var(--border); }
 
 @media screen {
+  .portal-main .portal-page-tabs {
+    position: sticky;
+    top: 4rem;
+    z-index: 19;
+    background: var(--background);
+  }
+
   /* Keep spacing stable while hiding component borders in dark mode. */
   html[data-portal-theme="dark"] * {
     border-color: transparent !important;
@@ -114,6 +127,254 @@ body { min-height: 100vh; background: var(--background); color: var(--foreground
 button, a, input, select { outline: none; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
+input[type="checkbox"] {
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  width: 1.125rem;
+  height: 1.125rem;
+  flex: none;
+  border: 1.5px solid var(--muted);
+  border-radius: 0.375rem;
+  background: var(--surface);
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background-color 150ms, border-color 150ms;
+}
+input[type="checkbox"]::before {
+  content: "";
+  width: 0.55rem;
+  height: 0.55rem;
+  background: var(--school-primary-foreground);
+  clip-path: polygon(14% 48%, 0 64%, 42% 100%, 100% 18%, 85% 5%, 39% 73%);
+  transform: scale(0);
+  transition: transform 150ms;
+}
+input[type="checkbox"]:checked {
+  border-color: var(--school-primary);
+  background: var(--school-primary);
+}
+input[type="checkbox"]:checked::before { transform: scale(1); }
+input[type="checkbox"]:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.page-header-back {
+  padding-inline-start: 0;
+}
+
+@media (min-width: 640px) {
+  .page-header-body {
+    flex-wrap: wrap;
+  }
+
+  .page-header-body > :first-child {
+    flex: 1 1 18rem;
+  }
+}
+
+.page-header-actions {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.page-header-actions .flex {
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.page-header-actions :is(button, a) {
+  min-width: 0;
+  flex-shrink: 1;
+  min-height: 2.25rem;
+  padding-inline: clamp(0.25rem, 0.6vw, 0.75rem);
+  column-gap: 0.375rem;
+  font-size: clamp(0.6875rem, 0.7vw + 0.35rem, 0.8125rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.student-action-short {
+  display: none;
+}
+
+@media (max-width: 1300px) {
+  .student-action-long {
+    display: none;
+  }
+
+  .student-action-short {
+    display: inline;
+  }
+}
+
+@media screen {
+  .portal-main:has(table) {
+    padding-top: 1rem;
+  }
+
+  .portal-main:has(table) .page-header {
+    margin-bottom: 0.875rem;
+  }
+
+  .portal-main:has(table) .page-header-body {
+    gap: 0.75rem;
+  }
+
+  .portal-main:has(table) .page-header-description {
+    margin-top: 0.125rem;
+  }
+
+  .section-card:has(table) > .section-card-header {
+    padding-block: 0.625rem;
+  }
+
+  .portal-main:has(table) .table-page-tabs,
+  .portal-main:has(table) .finance-period-filter {
+    margin-bottom: 0.75rem;
+  }
+
+  .portal-main:has(table) .table-page-tabs a {
+    padding-block: 0.5rem;
+  }
+
+  .portal-main table {
+    width: 100%;
+    table-layout: auto;
+  }
+
+  .portal-main :is(div, section):not(.section-card):has(> table) {
+    overflow-x: auto;
+  }
+
+  @media (min-width: 901px) {
+    .portal-main table thead :is(th, td),
+    .portal-main table thead tr::before {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: var(--surface-muted);
+    }
+  }
+
+  .portal-main table :is(th, td) {
+    padding-inline: clamp(0.25rem, 0.55vw, 0.625rem) !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+  }
+
+  .portal-main table :is(th, td) :is(a, button, span, p, div, label, strong, b) {
+    min-width: 0;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .portal-main table thead tr::before,
+  .portal-main table tbody tr::before {
+    width: 2.5rem;
+    padding-inline: 0.625rem;
+  }
+
+}
+
+@media screen and (max-width: 900px) {
+  .portal-main table,
+  .portal-main table tbody {
+    display: block;
+    width: 100%;
+    min-width: 0 !important;
+  }
+
+  .portal-main table colgroup {
+    display: none;
+  }
+
+  .portal-main table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .portal-main table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: 0.5rem;
+    margin: 0.5rem 0.75rem;
+    padding: 0.75rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    background: var(--surface);
+  }
+
+  .portal-main table tbody tr::before {
+    display: none;
+  }
+
+  .portal-main table tbody :is(td, th) {
+    display: block;
+    min-width: 0;
+    padding: 0.125rem 0.5rem !important;
+  }
+
+  .portal-main table tbody td::before {
+    content: attr(data-column-label);
+    display: block;
+    margin-bottom: 0.125rem;
+    color: var(--muted);
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .portal-main table tbody td:not([data-column-label])::before,
+  .portal-main table tbody td[data-column-label=""]::before {
+    display: none;
+  }
+
+  .portal-main table tbody :is(td, th)[colspan] {
+    grid-column: 1 / -1;
+  }
+
+  .portal-main table tbody td:last-child:has(button) {
+    grid-column: 1 / -1;
+  }
+
+  .portal-main table tbody td .flex {
+    flex-wrap: wrap;
+  }
+}
+
+@media screen and (max-width: 359px) {
+  .portal-main table tbody tr {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media screen and (max-width: 639px) {
+  .portal-main { min-width: 0; overflow-wrap: anywhere; }
+  .page-header-actions, .section-card-action { width: 100%; }
+  .page-header-actions > :is(button, a),
+  .section-card-action > * { width: 100%; max-width: 100%; }
+  .section-card-action > .flex { flex-wrap: wrap; }
+  .page-header-actions > .flex { width: 100%; flex-wrap: nowrap; }
+  .receipt-print > div:first-child { flex-wrap: wrap; }
+  .receipt-print > div:first-child > div:last-child { width: 100%; text-align: left; }
+  :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+    font-size: 16px !important;
+  }
+}
+
+.table-filter-summary {
+  list-style: none;
+}
+
+.table-filter-summary::-webkit-details-marker {
+  display: none;
 }
 
 table {
@@ -158,6 +419,22 @@ table tbody tr:has(td[colspan])::before {
 .student-directory-table tbody tr::before {
   content: none;
   display: none;
+}
+
+.grading-settings-table thead tr::before,
+.grading-settings-table tbody tr::before {
+  content: none;
+  display: none;
+}
+
+@media screen and (max-width: 900px) {
+  .portal-main table.grading-settings-table { display: table; min-width: 520px !important; }
+  .portal-main table.grading-settings-table.grading-bands-table { min-width: 640px !important; }
+  .portal-main .grading-settings-table thead { position: static; width: auto; height: auto; clip-path: none; }
+  .portal-main .grading-settings-table tbody { display: table-row-group; }
+  .portal-main .grading-settings-table tbody tr { display: table-row; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+  .portal-main .grading-settings-table tbody td { display: table-cell; padding: 0.75rem !important; }
+  .portal-main .grading-settings-table tbody td::before { display: none; }
 }
 
 @utility scrollbar-thin {

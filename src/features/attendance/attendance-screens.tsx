@@ -27,12 +27,13 @@ import { PinToDashboardButton } from "@/features/dashboard-customisation/pin-to-
 import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
 import { PersonNameLink } from "@/features/people/person-name-link";
 import Link from "@/features/navigation-progress/navigation-progress-link";
-import { isAttendanceDateEditable, toLocalDateKey } from "@/lib/date-utils";
+import { formatDate, formatDateTime, isAttendanceDateEditable, toLocalDateKey } from "@/lib/date-utils";
 import { readStoredUser } from "@/lib/auth";
 import { readStoredToken } from "@/lib/api";
 import { AdminAttendanceOverview } from "./admin-attendance-screens";
 import { useAttendance } from "./attendance-context";
 import { attendanceRepository } from "./attendance.repository";
+import { attendanceActorLabel } from "./attendance-user-label";
 import type {
   AttendanceEntryInput,
   AttendanceRegister,
@@ -42,7 +43,9 @@ import {
   attendanceHistoryForStudent,
   filterAttendanceByPeriod,
   getAttendanceSummaryForStudent,
+  isAutomaticAbsentDay,
   selectAttendanceStudentId,
+  summarizeRegister,
 } from "./attendance.utils";
 
 const today = () => toLocalDateKey(new Date());
@@ -78,7 +81,6 @@ function attendanceRoster(
       status: "ACTIVE",
     };
   });
-  if (register.status === "SUBMITTED" || register.status === "REOPENED") return recordedStudents;
   const currentIds = new Set(currentStudents.map((student) => student.id));
   return [...currentStudents, ...recordedStudents.filter((student) => !currentIds.has(student.id))];
 }
@@ -100,9 +102,11 @@ function currentUserId() {
 function SummaryCards({
   entries,
   total,
+  autoAbsent,
 }: {
   entries: WorkingEntry[];
   total: number;
+  autoAbsent: boolean;
 }) {
   const count = (status: AttendanceStatus) =>
     entries.filter((item) => item.status === status).length;
@@ -110,12 +114,13 @@ function SummaryCards({
   const present = count("PRESENT");
   const late = count("LATE");
   const excused = count("EXCUSED");
+  const automatic = autoAbsent ? Math.max(0, total - marked) : 0;
   const items = [
     ["Present", present, "text-success"],
-    ["Absent", count("ABSENT"), "text-danger"],
+    ["Absent", count("ABSENT") + automatic, "text-danger"],
     ["Late", late, "text-warning"],
     ["Excused", excused, ""],
-    ["Unmarked", total - marked, ""],
+    ["Auto absent", automatic, ""],
   ];
 
   return (
@@ -155,6 +160,7 @@ export function TeacherAttendanceScreen() {
     startDate: selectedTerm?.startDate || settings.resumptionDate,
     endDate: selectedTerm?.endDate || settings.closingDate,
     requireStartDate: Boolean(selectedTerm),
+    isCurrentPeriod: scope.isCurrentPeriod,
   };
   const periodRegisters = filterAttendanceByPeriod(registers, attendancePeriod);
 
@@ -200,8 +206,9 @@ export function TeacherAttendanceScreen() {
               record.classId === schoolClass.id && record.date === date,
           );
           const count = getStudentsByClass(state, schoolClass.id).filter(
-            (item) => item.status === "ACTIVE",
+            (item) => item.status === "ACTIVE" && (!item.admissionDate || item.admissionDate.slice(0, 10) <= date),
           ).length;
+          const summary = summarizeRegister(register?.status === "DRAFT" ? undefined : register, Math.max(count, register?.entries.length ?? 0), isAutomaticAbsentDay(date, attendancePeriod));
           return (
             <Card key={schoolClass.id} className="p-5">
               <div className="flex items-start justify-between">
@@ -210,6 +217,7 @@ export function TeacherAttendanceScreen() {
                   <p className="mt-1 text-sm text-muted">
                     {count} students · {date}
                   </p>
+                  <p className="mt-1 text-xs text-muted">{summary.present} present · {summary.absent} absent · {isAutomaticAbsentDay(date, attendancePeriod) ? Math.max(0, summary.absent - (register?.status === "DRAFT" ? 0 : register?.entries.filter((entry) => entry.status === "ABSENT").length ?? 0)) : 0} auto</p>
                 </div>
                 <Badge
                   tone={
@@ -226,7 +234,7 @@ export function TeacherAttendanceScreen() {
               <div className="mt-5 flex items-center justify-between border-t pt-4">
                 <span className="text-xs text-muted">
                   {register?.submittedAt
-                    ? `Submitted ${new Date(register.submittedAt).toLocaleString()}`
+                    ? `Submitted ${formatDateTime(register.submittedAt)}`
                     : "Ready to open"}
                 </span>
                 <Link
@@ -290,6 +298,7 @@ export function AttendanceRegisterScreen({
     startDate: selectedTerm?.startDate || settings.resumptionDate,
     endDate: selectedTerm?.endDate || settings.closingDate,
     requireStartDate: Boolean(selectedTerm),
+    isCurrentPeriod: scope.isCurrentPeriod,
   };
   const periodRegisters = filterAttendanceByPeriod(registers, attendancePeriod);
   const register = periodRegisters.find(
@@ -326,7 +335,7 @@ export function AttendanceRegisterScreen({
   }
 
   const dateLocked = isAdmin
-    ? !register && !(scope.isCurrentPeriod && date === todayKey) && !dateBelongsToPeriod(date, attendancePeriod)
+    ? !register && !isAutomaticAbsentDay(date, attendancePeriod) && !dateBelongsToPeriod(date, attendancePeriod)
     : !isAttendanceDateEditable(date) && register?.status !== "REOPENED";
   const periodLocked = isAdmin
     ? !scope.isCurrentPeriod && !settings.historicalEditingEnabled && register?.status !== "REOPENED"
@@ -417,7 +426,7 @@ export function AttendanceRegisterScreen({
     <>
       <PageHeader
         title={`${schoolClass.displayName} Register`}
-        description="Mark every student, review the live summary and submit once complete."
+        description="Record known attendance; students left without a submitted mark are shown as absent automatically."
         action={
           isAdmin ? <span className="text-sm font-medium">{date}</span> : (
             <label className="text-sm font-medium">
@@ -434,7 +443,7 @@ export function AttendanceRegisterScreen({
         }
       />
       {error && <p role="alert" className="mb-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</p>}
-      <SummaryCards entries={entries} total={students.length} />
+      <SummaryCards entries={entries} total={students.length} autoAbsent={isAutomaticAbsentDay(date, { ...attendancePeriod, isCurrentPeriod: scope.isCurrentPeriod })} />
       {readOnly && (
         <div className="mt-5 flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm">
           <LockKeyhole size={17} />
@@ -524,6 +533,7 @@ export function AttendanceRegisterScreen({
                 const entry = entries.find(
                   (item) => item.studentId === student.id,
                 );
+                const savedEntry = register?.entries.find((item) => item.studentId === student.id);
                 return (
                   <tr key={student.id}>
                     <td className="px-4 py-3">
@@ -564,11 +574,18 @@ export function AttendanceRegisterScreen({
                             ),
                           )
                         }
-                        placeholder="Unmarked"
+                        placeholder={isAutomaticAbsentDay(date, { ...attendancePeriod, isCurrentPeriod: scope.isCurrentPeriod }) ? "Absent · Auto" : "Unmarked"}
                         options={Object.entries(statusLabels).map(
                           ([value, label]) => ({ value, label }),
                         )}
                       />
+                      <p className="mt-1 text-xs text-muted">
+                        {entry?.status
+                          ? savedEntry?.status === entry.status
+                            ? `Marked by ${attendanceActorLabel(savedEntry.markedByUserId, state, savedEntry.markedByUser)}`
+                            : "Pending save"
+                          : isAutomaticAbsentDay(date, { ...attendancePeriod, isCurrentPeriod: scope.isCurrentPeriod }) ? "Auto absence if submitted without a mark" : "No mark"}
+                      </p>
                     </td>
                     <td className="px-4 py-3">
                       <Input
@@ -617,25 +634,19 @@ export function AdminAttendanceScreen() {
 }
 
 function PersonalAttendance({ studentId }: { studentId: string }) {
-  const { registers, sessionRegisters, isLoading, error } = useAttendance();
+  const { sessionRegisters, isLoading, error } = useAttendance();
   const { state } = useAcademics();
   const { settings } = useSchoolSettings();
-  const { selectedSession, selectedTerm, scope } = useAcademicPeriod();
-  const attendancePeriod = {
-    academicSessionId: scope.academicSessionId,
-    termId: scope.termId,
-    startDate: selectedTerm?.startDate || settings.resumptionDate,
-    endDate: selectedTerm?.endDate || settings.closingDate,
-    requireStartDate: Boolean(selectedTerm),
-  };
-  const periodRegisters = filterAttendanceByPeriod(registers, attendancePeriod);
-  const effectiveStudentId = studentId || firstStudentIdFromRegisters(periodRegisters);
+  const { selectedSession, scope } = useAcademicPeriod();
+  const effectiveStudentId = studentId || firstStudentIdFromRegisters(sessionRegisters);
   const student = state.students.find((item) => item.id === effectiveStudentId);
   const sessionPeriod = {
     academicSessionId: selectedSession?.id,
     startDate: selectedSession?.startDate || settings.resumptionDate,
     endDate: selectedSession?.endDate || settings.closingDate,
     requireStartDate: Boolean(selectedSession),
+    isCurrentPeriod: scope.isCurrentPeriod,
+    studentStartDate: student?.admissionDate,
   };
   const summary = getAttendanceSummaryForStudent(sessionRegisters, effectiveStudentId, sessionPeriod);
   const history = attendanceHistoryForStudent(sessionRegisters, effectiveStudentId, sessionPeriod);
@@ -648,12 +659,12 @@ function PersonalAttendance({ studentId }: { studentId: string }) {
       {error && <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</p>}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
         {[
-          ["Today's status", current ? statusLabels[current.status] : "Not marked"],
+          ["Today's status", current ? `${statusLabels[current.status]}${current.source === "AUTO" ? " · Auto" : ""}` : "No school day"],
           ["Session attendance", `${summary.percentage}%`],
           ["Present days", summary.present],
           ["Absent days", summary.absent],
           ["Late days", summary.late],
-          ["Unmarked days", summary.unmarked],
+          ["Auto absent days", summary.autoAbsent],
         ].map(([label, value]) => (
           <Card key={String(label)} className="p-4">
             <p className="text-sm text-muted">{label}</p>
@@ -673,10 +684,13 @@ function PersonalAttendance({ studentId }: { studentId: string }) {
                 className="flex items-center justify-between gap-4 py-3"
               >
                 <div>
-                  <p className="text-sm font-medium">{item.date}</p>
+                  <p className="text-sm font-medium">{formatDate(item.date)}</p>
                   {item.note && (
                     <p className="text-xs text-muted">{item.note}</p>
                   )}
+                  <p className="text-xs text-muted">
+                    {item.source === "AUTO" ? "Automatically marked absent" : `Marked by ${attendanceActorLabel(item.markedByUserId, state, item.markedByUser)}`}
+                  </p>
                 </div>
                 <Badge
                   tone={
@@ -693,7 +707,7 @@ function PersonalAttendance({ studentId }: { studentId: string }) {
             ))
           ) : (
             <p className="py-8 text-center text-sm text-muted">
-              No submitted attendance yet.
+              No school days or submitted attendance yet.
             </p>
           )}
         </div>
@@ -704,10 +718,10 @@ function PersonalAttendance({ studentId }: { studentId: string }) {
 
 export function StudentAttendanceScreen() {
   const { state } = useAcademics();
-  const { registers } = useAttendance();
+  const { sessionRegisters } = useAttendance();
   const user = readStoredUser();
   const resolved = resolveStudentSession(state, user, readStoredToken() ? undefined : "student-yusuf");
-  const studentId = selectAttendanceStudentId(registers, resolved.studentId);
+  const studentId = selectAttendanceStudentId(sessionRegisters, resolved.studentId);
   return (
     <>
       <PageHeader
@@ -721,24 +735,14 @@ export function StudentAttendanceScreen() {
 
 export function ParentAttendanceScreen() {
   const { state } = useAcademics();
-  const { registers } = useAttendance();
-  const { settings } = useSchoolSettings();
-  const { selectedTerm, scope } = useAcademicPeriod();
+  const { sessionRegisters } = useAttendance();
   const user = readStoredUser();
-  const attendancePeriod = {
-    academicSessionId: scope.academicSessionId,
-    termId: scope.termId,
-    startDate: selectedTerm?.startDate || settings.resumptionDate,
-    endDate: selectedTerm?.endDate || settings.closingDate,
-    requireStartDate: Boolean(selectedTerm),
-  };
-  const periodRegisters = filterAttendanceByPeriod(registers, attendancePeriod);
   const children = user?.guardianId
     ? getGuardianChildren(state, user.guardianId)
     : state.students.filter((student) => user?.childStudentIds?.includes(student.id));
   const attendanceStudentIds = [
     ...new Set(
-      periodRegisters.flatMap((register) =>
+      sessionRegisters.flatMap((register) =>
         register.entries.map((entry) => entry.studentId),
       ),
     ),

@@ -2,11 +2,10 @@
 
 import { useMemo, useState } from "react";
 import {
-  ArrowRightLeft,
   Download,
   Pencil,
-  Printer,
   Upload,
+  School,
 } from "lucide-react";
 import Link from "@/features/navigation-progress/navigation-progress-link";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -26,13 +25,15 @@ import { academicTermLabel } from "@/features/academic-period/academic-period.ty
 import { filterAssignmentsByPeriod } from "@/features/assignments/assignments-period-utils";
 import { useAssignments } from "@/features/assignments/assignments-context";
 import { useAttendance } from "@/features/attendance/attendance-context";
-import { attendanceUserLabel } from "@/features/attendance/attendance-user-label";
+import { attendanceActorLabel } from "@/features/attendance/attendance-user-label";
 import { useFinance } from "@/features/finance/finance-context";
 import { formatNaira } from "@/lib/currency";
+import { formatDate, formatDateTime, formatTime } from "@/lib/date-utils";
 import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
 import { PersonNameLink } from "@/features/people/person-name-link";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { buildStudentCompleteRecord } from "./student-record";
+import { StudentClassDialog } from "./student-class-dialog";
 import { StudentFormPage } from "./student-form-screen";
 
 const tabs = [
@@ -54,107 +55,7 @@ const subjectName = (id: string) =>
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
 const displayDate = (value?: string) =>
-  value ? new Date(value).toLocaleDateString() : "Not provided";
-
-function MoveClassDialog({
-  studentId,
-  currentClassId,
-  onClose,
-}: {
-  studentId: string;
-  currentClassId: string;
-  onClose: () => void;
-}) {
-  const { state, moveStudentToClass } = useAcademics();
-  const { toast } = useActionFeedback();
-  const [classId, setClassId] = useState("");
-  const [effectiveDate, setEffectiveDate] = useState(
-    new Date().toISOString().slice(0, 10),
-  );
-  const [reason, setReason] = useState("");
-  const [saving, setSaving] = useState(false);
-  const current = state.classes.find((item) => item.id === currentClassId);
-
-  const save = async () => {
-    if (!classId || !reason.trim()) {
-      toast("Select a class and enter a reason.", "error");
-      return;
-    }
-    setSaving(true);
-    try {
-      await moveStudentToClass({
-        studentId,
-        classId,
-        effectiveDate,
-        reason,
-      });
-      const target = state.classes.find((item) => item.id === classId);
-      toast(`Student moved to ${target?.displayName ?? "the new class"}.`, "success");
-      onClose();
-    } catch (error) {
-      toast(
-        error instanceof Error ? error.message : "Student could not be moved.",
-        "error",
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <SidePanel open title="Move Class" description={`Current class: ${current?.displayName ?? "Unassigned"}`} onClose={onClose} maxWidth="md">
-        <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          <label className="text-sm font-medium sm:col-span-2">
-            New class
-            <Select
-              className="mt-2"
-              searchable
-              label="New class"
-              value={classId}
-              onChange={setClassId}
-              placeholder="Select a class"
-              options={state.classes
-                .filter(
-                  (item) =>
-                    item.status === "ACTIVE" && item.id !== currentClassId,
-                )
-                .sort((a, b) => a.sortOrder - b.sortOrder)
-                .map((item) => ({
-                  value: item.id,
-                  label: item.displayName,
-                }))}
-            />
-          </label>
-          <label className="text-sm font-medium">
-            Effective date
-            <Input
-              className="mt-2"
-              type="date"
-              value={effectiveDate}
-              onChange={(event) => setEffectiveDate(event.target.value)}
-            />
-          </label>
-          <label className="text-sm font-medium sm:col-span-2">
-            Reason
-            <Input
-              className="mt-2"
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-              placeholder="Reason for moving this student"
-            />
-          </label>
-        </div>
-        <div className="mt-5 flex justify-end gap-2 border-t pt-4">
-          <Button type="button" variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="button" disabled={saving} onClick={() => void save()}>
-            {saving ? "Moving student..." : "Move Student"}
-          </Button>
-        </div>
-    </SidePanel>
-  );
-}
+  value ? formatDate(value) : "Not provided";
 
 export function StudentDetailPage({ studentId }: { studentId: string }) {
   const { state: academics, isLoading, updateStudentStatus, addStudentDocument, removeStudentDocument, assignStudentParents } =
@@ -163,7 +64,7 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
   const { registers, sessionRegisters } = useAttendance();
   const { allState: finance } = useFinance();
   const { settings } = useSchoolSettings();
-  const { selectedSession, selectedTerm } = useAcademicPeriod();
+  const { selectedSession, selectedTerm, scope } = useAcademicPeriod();
   const { confirm, toast } = useActionFeedback();
   const [tab, setTab] = useState<Tab>("Overview");
   const [showEdit, setShowEdit] = useState(false);
@@ -177,8 +78,9 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
       startDate: selectedSession?.startDate || settings.resumptionDate,
       endDate: selectedSession?.endDate || settings.closingDate,
       requireStartDate: Boolean(selectedSession),
+      isCurrentPeriod: scope.isCurrentPeriod,
     }),
-    [selectedSession, settings.closingDate, settings.resumptionDate],
+    [selectedSession, settings.closingDate, settings.resumptionDate, scope.isCurrentPeriod],
   );
   const record = buildStudentCompleteRecord(
     studentId,
@@ -336,22 +238,10 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
       <PageHeader
         title={fullName}
         description={`${student.admissionNumber} · ${record.currentClass?.displayName ?? "No class"}`}
-        action={
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" onClick={() => setShowEdit(true)}>
-              <Pencil size={15} />
-              Edit Student
-            </Button>
-            <Button type="button" variant="outline" onClick={() => setShowMove(true)}>
-              <ArrowRightLeft size={15} />
-              Move Class
-            </Button>
-            <Button type="button" variant="outline" onClick={() => window.print()}>
-              <Printer size={15} />
-              Print Student Record
-            </Button>
-          </div>
-        }
+        action={<div className="flex flex-wrap gap-2">
+          {!student.classId && <Button type="button" onClick={() => setShowMove(true)}><School size={15} />Assign class</Button>}
+          <Button type="button" variant="outline" onClick={() => setShowEdit(true)}><Pencil size={15} />Edit Student</Button>
+        </div>}
       />
 
       <Card className="mb-5 min-w-0 p-5">
@@ -379,9 +269,15 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
             className="w-full sm:max-w-52"
             label="More student actions"
             value=""
-            onChange={(value) => changeStatus(value as StudentStatus)}
+            onChange={(value) => {
+              if (value === "MOVE_CLASS") setShowMove(true);
+              else if (value === "PRINT_RECORD") window.print();
+              else changeStatus(value as StudentStatus);
+            }}
             placeholder="More Actions"
             options={[
+              { value: "MOVE_CLASS", label: student.classId ? "Move Class" : "Assign Class" },
+              { value: "PRINT_RECORD", label: "Print Student Record" },
               { value: "ACTIVE", label: "Mark Active" },
               { value: "INACTIVE", label: "Mark Inactive" },
               { value: "WITHDRAWN", label: "Withdraw Student" },
@@ -434,7 +330,7 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
               title="Recent School Activity"
               rows={record.activities.slice(0, 6).map((item) => [
                 item.action,
-                `${item.detail} · ${new Date(item.createdAt).toLocaleDateString()}`,
+                `${item.detail} · ${formatDate(item.createdAt)}`,
               ])}
             />
           </div>
@@ -491,10 +387,10 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
           rows={periodAssignmentRecords.map(({ assignment, submission }) => [
             assignment.title,
             subjectName(assignment.subjectId),
-            new Date(assignment.dueAt).toLocaleDateString(),
+            formatDate(assignment.dueAt),
             submission?.status ?? "NOT SUBMITTED",
             submission?.submittedAt
-              ? new Date(submission.submittedAt).toLocaleString()
+              ? formatDateTime(submission.submittedAt)
               : "—",
             typeof submission?.score === "number" ? `${submission.score}%` : "—",
             <Link key={assignment.id} href={`/teacher/assignments/${assignment.id}`} className="font-semibold text-[var(--school-primary)]">
@@ -532,20 +428,23 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
             rows={record.attendanceRecords
               .filter((item) => (!dateFrom || item.date >= dateFrom) && (!dateTo || item.date <= dateTo) && (!attendanceStatus || item.status === attendanceStatus))
               .map((item) => [
-                item.date,
+                formatDate(item.date),
                 item.status,
-                item.arrivalTime ?? "—",
+                item.arrivalTime ? formatTime(item.arrivalTime) : "—",
                 item.note ?? "—",
                 academics.classes.find((entry) => entry.id === item.classId)?.displayName ?? "—",
-                attendanceUserLabel(
+                item.source === "AUTO" ? "Auto" : attendanceActorLabel(
                   item.markedByUserId,
                   academics,
-                  registers.find((register) => register.id === item.registerId)?.auditHistory.find(
+                  item.markedByUser ?? registers.find((register) => register.id === item.registerId)?.auditHistory.find(
                     (audit) => audit.actorUserId === item.markedByUserId,
                   )?.actorUser,
+                  registers.find((register) => register.id === item.registerId)?.auditHistory.find(
+                    (audit) => audit.actorUserId === item.markedByUserId,
+                  )?.actorRole,
                 ),
-                new Date(item.updatedAt).toLocaleString(),
-                <Link key={item.id} href={`/admin/attendance/${item.classId}/${item.date}`} className="font-semibold text-[var(--school-primary)]">Open</Link>,
+                item.source === "AUTO" ? "—" : formatDateTime(item.updatedAt),
+                item.registerId ? <Link key={item.id} href={`/admin/attendance/${item.classId}/${item.date}`} className="font-semibold text-[var(--school-primary)]">Open</Link> : "—",
               ])}
             empty="No attendance records match these filters."
           />
@@ -576,7 +475,7 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
               formatNaira(item.totalAmount),
               formatNaira(item.amountPaid),
               formatNaira(item.outstandingBalance),
-              item.dueDate,
+              formatDate(item.dueDate),
               item.status,
             ])}
             empty="No invoices are linked to this student."
@@ -586,7 +485,7 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
             rows={record.payments.map((item) => {
               const receipt = record.receipts.find((entry) => entry.paymentId === item.id);
               return [
-                item.paymentDate,
+                formatDate(item.paymentDate),
                 formatNaira(item.amount),
                 item.method,
                 item.reference,
@@ -645,7 +544,7 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
           <div className="divide-y px-4">
             {record.documents.map((item) => (
               <div key={item.id} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0"><p className="truncate font-semibold">{item.name}</p><p className="text-xs text-muted">{item.type} · {new Date(item.uploadedAt).toLocaleDateString()} · {item.uploadedBy}</p></div>
+                <div className="min-w-0"><p className="truncate font-semibold">{item.name}</p><p className="text-xs text-muted">{item.type} · {formatDate(item.uploadedAt)} · {item.uploadedBy}</p></div>
                 <div className="flex gap-2">
                   {item.dataUrl && <a href={item.dataUrl} download={item.name} className="inline-flex min-h-10 items-center gap-1 rounded-[10px] border px-3 text-sm font-semibold"><Download size={14}/>Download</a>}
                   <Button type="button" variant="outline" onClick={() => confirm({title:"Remove document?",description:"This demo file will be removed from the student record.",confirmLabel:"Remove",destructive:true,onConfirm:async()=>{await removeStudentDocument(item.id);toast("Document removed.","success")}})}>Remove</Button>
@@ -665,7 +564,7 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
                 <span className="absolute left-0 top-5 size-2 rounded-full bg-[var(--school-primary)]" />
                 <p className="font-semibold">{item.action}</p>
                 <p className="mt-1 text-sm text-muted">{item.detail}</p>
-                <p className="mt-1 text-xs text-muted">{new Date(item.createdAt).toLocaleString()}</p>
+                <p className="mt-1 text-xs text-muted">{formatDateTime(item.createdAt)}</p>
               </div>
             ))}
           </div>
@@ -673,8 +572,9 @@ export function StudentDetailPage({ studentId }: { studentId: string }) {
       )}
 
       {showMove && (
-        <MoveClassDialog
+        <StudentClassDialog
           studentId={student.id}
+          studentName={fullName}
           currentClassId={student.classId}
           onClose={() => setShowMove(false)}
         />

@@ -33,16 +33,16 @@ const themeInitScript = `
     const secondary = "#0F766E";
     const accent = "#F59E0B";
     const vars = {
-      "--background": dark ? "#0B1120" : "#FFFFFF",
+      "--background": dark ? "#0B1120" : "#F0F1EF",
       "--foreground": dark ? "#E5E7EB" : "#172033",
       "--primary": primary,
       "--primary-hover": mix(primary, dark ? "#FFFFFF" : "#000000", dark ? 0.12 : 0.16),
       "--primary-light": dark ? mix(primary, "#0B1120", 0.68) : mix(primary, "#FFFFFF", 0.86),
       "--secondary": secondary,
       "--secondary-light": dark ? mix(secondary, "#0B1120", 0.72) : mix(secondary, "#FFFFFF", 0.86),
-      "--surface": dark ? "#111827" : "#FFFFFF",
-      "--surface-muted": dark ? "#1F2937" : "#F8FAFC",
-      "--border": dark ? "#334155" : "#E2E8F0",
+      "--surface": dark ? "#111827" : "#FAFAF9",
+      "--surface-muted": dark ? "#1F2937" : "#E8EAE7",
+      "--border": dark ? "#334155" : "#D6D9D4",
       "--muted": dark ? "#9CA3AF" : "#64748B",
       "--success": dark ? "#4ADE80" : "#15803D",
       "--warning": dark ? "#FBBF24" : "#B45309",

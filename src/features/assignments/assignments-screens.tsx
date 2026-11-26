@@ -21,6 +21,7 @@ import { assignmentRemovalPolicy } from "@/features/action-feedback/record-actio
 import { readStoredToken } from "@/lib/api";
 import { readStoredUser } from "@/lib/auth";
 import { matchesSearch } from "@/lib/search";
+import { formatDateTime } from "@/lib/date-utils";
 import { readAssignmentAsset } from "./assignment-asset.repository";
 import { filterAssignmentsByPeriod } from "./assignments-period-utils";
 import { useAssignments } from "./assignments-context";
@@ -110,7 +111,7 @@ function subjectName(academics: AcademicsState, id: string) {
 }
 
 function due(value: string) {
-  return value ? new Date(value).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "No due date";
+  return value ? formatDateTime(value) : "No due date";
 }
 
 function tone(status: string) {

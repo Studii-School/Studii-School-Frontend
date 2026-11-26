@@ -7,9 +7,9 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { ProfileImageField } from "@/components/shared/profile-image-field";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { BrandIcon, type BrandTone } from "@/components/ui/brand-icon";
 import { Input } from "@/components/ui/input";
 import { MultiSelect, Select } from "@/components/ui/select";
-import { ButtonTabs } from "@/components/ui/tabs";
 import { useAcademics } from "@/features/academics/academics-context";
 import type {
   Guardian,
@@ -360,29 +360,25 @@ export function StudentFormPage({
           description="Capture the essentials first, then enrich the student profile without making manual entry feel heavy."
         />
       )}
-      <Card className={variant === "modal" ? "mb-4 overflow-hidden" : "mb-5 overflow-hidden"}>
-        <div className="grid gap-0 md:grid-cols-[1fr_220px]">
-          <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
-            <ProgressTile icon={<UserRound size={18} />} label="Name" done={Boolean(form.firstName.trim() && form.lastName.trim())} />
-            <ProgressTile icon={<School size={18} />} label="Class" done={Boolean(form.classId)} />
-            <ProgressTile icon={<UsersRound size={18} />} label="Parent" done={form.guardianMode === "existing" ? Boolean(form.selectedGuardianIds.length) : Boolean(form.guardianName.trim() && form.guardianPhone.trim())} />
-            <ProgressTile icon={<HeartPulse size={18} />} label="Care notes" done={Boolean(form.emergencyContactName?.trim() || form.medicalNotes?.trim() || documents.length)} optional />
-          </div>
-          <div className="border-t bg-surface-muted p-4 md:border-l md:border-t-0">
+      <Card className={variant === "modal" ? "mb-4 overflow-hidden" : "sticky top-16 z-10 mb-5 overflow-hidden shadow-sm"}>
+        <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_170px]">
+          <nav aria-label="Student form sections" className="grid min-w-0 grid-cols-3 gap-2 p-3 lg:grid-cols-6">
+            <ProgressTile icon={<UserRound size={16} />} tone="primary" label="Name" done={Boolean(form.firstName.trim() && form.lastName.trim())} status="Required" active={step === 0} onClick={() => setStep(0)} />
+            <ProgressTile icon={<School size={16} />} tone="secondary" label="Class" done={Boolean(form.classId)} status="Required" active={step === 1} onClick={() => setStep(1)} />
+            <ProgressTile icon={<UsersRound size={16} />} tone="accent" label="Parent" done={form.guardianMode === "existing" ? Boolean(form.selectedGuardianIds.length) : Boolean(form.guardianName.trim() && form.guardianPhone.trim())} status="Required" active={step === 2} onClick={() => setStep(2)} />
+            <ProgressTile icon={<HeartPulse size={16} />} tone="secondary" label="Care notes" done={Boolean(form.emergencyContactName?.trim() || form.medicalNotes?.trim() || documents.length)} status="Optional" active={step === 3} onClick={() => setStep(3)} />
+            <ProgressTile icon={<Upload size={16} />} tone="accent" label="Files" done={Boolean(documents.length)} status="Optional" active={step === 4} onClick={() => setStep(4)} />
+            <ProgressTile icon={<FileCheck2 size={16} />} tone="primary" label="Review" done={false} status="Summary" active={step === 5} onClick={() => setStep(5)} />
+          </nav>
+          <div className="min-w-0 border-t bg-surface-muted p-3 lg:border-l lg:border-t-0">
             <p className="text-xs font-semibold uppercase text-muted">Record readiness</p>
-            <p className="mt-2 text-3xl font-bold">{completion}/4</p>
-            <p className="mt-1 text-sm text-muted">{selectedClass?.displayName ?? "Class not selected"}</p>
+            <p className="mt-1 text-2xl font-bold">{completion}/4</p>
+            <p className="mt-1 truncate text-xs text-muted" title={selectedClass?.displayName ?? "Class not selected"}>{selectedClass?.displayName ?? "Class not selected"}</p>
           </div>
         </div>
       </Card>
-      <ButtonTabs
-        label="Student edit sections"
-        items={steps}
-        value={steps[step]}
-        onChange={(value) => setStep(steps.indexOf(value))}
-      />
 
-      <section className="mt-4 rounded-xl border bg-surface p-4 sm:p-5">
+      <section id="student-form-section" aria-label={`${steps[step]} details`} className="rounded-xl border bg-surface p-4 sm:p-5">
         {step === 0 && (
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="First name">
@@ -661,23 +657,29 @@ export function StudentFormPage({
 
 function ProgressTile({
   icon,
+  tone,
   label,
   done,
-  optional,
+  status,
+  active,
+  onClick,
 }: {
   icon: ReactNode;
+  tone: BrandTone;
   label: string;
   done: boolean;
-  optional?: boolean;
+  status: "Required" | "Optional" | "Summary";
+  active: boolean;
+  onClick: () => void;
 }) {
   return (
-    <div className={`rounded-[8px] border p-3 ${done ? "border-[var(--school-primary)] bg-primary-light" : "bg-surface"}`}>
-      <div className="flex items-center justify-between gap-3">
-        <span className={done ? "text-[var(--school-primary)]" : "text-muted"}>{icon}</span>
-        {done ? <Check size={15} className="text-[var(--school-primary)]" /> : <span className="text-xs text-muted">{optional ? "Optional" : "Required"}</span>}
+    <button type="button" aria-pressed={active} aria-controls="student-form-section" onClick={onClick} className={`min-w-0 rounded-[8px] border p-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--school-primary)] ${active ? "border-[var(--school-primary)] bg-[var(--school-primary)] text-[var(--school-primary-foreground)]" : "bg-surface hover:border-[var(--school-primary)] hover:bg-surface-muted"}`}>
+      <div className="flex items-center justify-between gap-1">
+        <BrandIcon tone={tone} className="size-7">{icon}</BrandIcon>
+        {done ? <Check size={14} className={`shrink-0 ${active ? "text-current" : "text-[var(--school-primary)]"}`} /> : <span className={`hidden truncate text-[10px] leading-tight sm:block ${active ? "text-current opacity-80" : "text-muted"}`}>{status}</span>}
       </div>
-      <p className="mt-3 text-sm font-semibold">{label}</p>
-    </div>
+      <span className="mt-2 block truncate text-xs font-semibold" title={label}>{label}</span>
+    </button>
   );
 }
 

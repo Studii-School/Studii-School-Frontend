@@ -20,6 +20,7 @@ import type {
   AttendanceAuditEntry,
   AttendanceRegister,
   SaveAttendanceInput,
+  StudentAttendanceEntry,
 } from "./attendance.types";
 
 export interface AttendanceRepository {
@@ -332,21 +333,26 @@ export class LocalAttendanceRepository implements AttendanceRepository {
     const previous = register.entries.find(
       (item) => item.studentId === input.studentId,
     );
-    if (!previous) throw new Error("Student attendance entry not found.");
     const now = new Date().toISOString();
-    const updated = {
+    const updated: StudentAttendanceEntry = {
+      id: previous?.id ?? `entry-${crypto.randomUUID()}`,
+      schoolId: register.schoolId,
+      registerId: register.id,
+      studentId: input.studentId,
+      createdAt: previous?.createdAt ?? now,
       ...previous,
       status: input.status,
       note: input.note,
       arrivalTime: input.arrivalTime,
       markedByUserId: input.adminUserId,
+      markedByUser: { id: input.adminUserId, role: "SCHOOL_ADMIN" },
       updatedAt: now,
     };
     const next = {
       ...register,
-      entries: register.entries.map((item) =>
-        item.id === previous.id ? updated : item,
-      ),
+      entries: previous
+        ? register.entries.map((item) => item.id === previous.id ? updated : item)
+        : [...register.entries, updated],
       updatedAt: now,
       auditHistory: [
         ...register.auditHistory,
@@ -356,7 +362,7 @@ export class LocalAttendanceRepository implements AttendanceRepository {
           input.adminUserId,
           "ADMIN",
           input.reason,
-          previous.status,
+          previous?.status ?? "AUTO_ABSENT",
           input.status,
         ),
       ],
@@ -386,6 +392,7 @@ type BackendAttendanceEntry = Partial<AttendanceRegister["entries"][number]> & {
   sessionId?: string;
   termId?: string;
   markedById?: string;
+  markedBy?: { id?: string; name?: string | null; email?: string | null; role?: string };
   register?: BackendAttendanceRegister;
 };
 type BackendAttendanceRegister = Partial<AttendanceRegister> & {
@@ -444,6 +451,7 @@ function mapAttendanceEntry(item: BackendAttendanceEntry, registerId: string): A
     note: item.note,
     arrivalTime: item.arrivalTime,
     markedByUserId: item.markedByUserId ?? item.markedById ?? "",
+    markedByUser: item.markedByUser ?? item.markedBy,
     createdAt: item.createdAt ?? now,
     updatedAt: item.updatedAt ?? now,
   };

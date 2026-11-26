@@ -2,7 +2,7 @@ import type { AcademicsState, Guardian } from "@/features/academics/academics.ty
 import type { AssignmentsState } from "@/features/assignments/assignments.types";
 import type { AttendanceRegister } from "@/features/attendance/attendance.types";
 import type { FinanceState } from "@/features/finance/finance.types";
-import { filterAttendanceByPeriod, filterAttendanceBySession, getAttendanceSummaryForStudent, type AttendancePeriod } from "@/features/attendance/attendance.utils";
+import { attendanceHistoryForStudent, filterAttendanceByPeriod, filterAttendanceBySession, getAttendanceSummaryForStudent, type AttendancePeriod } from "@/features/attendance/attendance.utils";
 import { dateBelongsToPeriod } from "@/features/academic-period/period-scope-utils";
 
 export function buildStudentCompleteRecord(
@@ -43,24 +43,13 @@ export function buildStudentCompleteRecord(
   const periodAttendance = attendancePeriod?.termId
     ? filterAttendanceByPeriod(attendance, attendancePeriod)
     : filterAttendanceBySession(attendance, attendancePeriod);
-  const attendanceRecords = periodAttendance
-    .filter((item) => item.status === "SUBMITTED" || item.status === "REOPENED")
-    .flatMap((register) =>
-      register.entries
-        .filter((entry) => entry.studentId === studentId)
-        .map((entry) => ({
-          ...entry,
-          registerId: register.id,
-          classId: register.classId,
-          date: register.date,
-          teacherUserId: register.teacherUserId,
-        })),
-    )
-    .sort((a, b) => b.date.localeCompare(a.date));
+  const studentAttendancePeriod = { ...attendancePeriod, studentStartDate: student.admissionDate };
+  const attendanceRecords = attendanceHistoryForStudent(periodAttendance, studentId, studentAttendancePeriod)
+    .map((item) => ({ ...item, classId: item.classId || student.classId }));
   const attendanceSummary = getAttendanceSummaryForStudent(
     periodAttendance,
     studentId,
-    attendancePeriod,
+    studentAttendancePeriod,
   );
   const classHistory = academics.studentClassHistory.filter(
     (item) => item.studentId === studentId,
@@ -99,7 +88,7 @@ export function buildStudentCompleteRecord(
     ...academics.studentActivities.filter(
       (item) => item.studentId === studentId && dateBelongsToPeriod(item.createdAt, attendancePeriod),
     ),
-    ...attendanceRecords.map((item) => ({
+    ...attendanceRecords.filter((item) => item.source === "MANUAL").map((item) => ({
       id: `attendance-${item.id}`,
       studentId,
       action: "Attendance recorded",
@@ -163,6 +152,7 @@ export function studentAttendancePercentage(
   studentId: string,
   attendance: AttendanceRegister[],
   attendancePeriod?: AttendancePeriod,
+  studentStartDate?: string,
 ) {
-  return getAttendanceSummaryForStudent(attendance, studentId, attendancePeriod).percentage;
+  return getAttendanceSummaryForStudent(attendance, studentId, { ...attendancePeriod, studentStartDate }).percentage;
 }

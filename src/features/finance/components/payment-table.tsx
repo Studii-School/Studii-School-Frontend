@@ -4,7 +4,9 @@ import { usePathname } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { ClickableTableRow } from "@/components/ui/clickable-table-row";
 import { EmptyState } from "@/components/ui/empty-state";
+import { TablePagination, usePaginatedRows } from "@/components/ui/table-pagination";
 import { formatNaira } from "@/lib/currency";
+import { formatDate } from "@/lib/date-utils";
 import { useFinance } from "../finance-context";
 import type { Payment } from "../finance.types";
 
@@ -19,12 +21,14 @@ export function PaymentTable({ payments }: { payments: Payment[] }) {
   const { allState } = useFinance();
   const isAdmin = usePathname().startsWith("/admin/");
   const invoiceById = new Map(allState.invoices.map((invoice) => [invoice.id, invoice]));
+  const pagination = usePaginatedRows(payments, `${payments.length}|${payments[0]?.id}|${payments[payments.length - 1]?.id}`);
 
   if (!payments.length) {
     return <EmptyState title="No payments yet" description="Flutterwave and manually recorded payments will appear here." />;
   }
 
   return (
+    <>
     <div className="overflow-x-auto">
       <table className="w-full min-w-[980px] text-left text-sm">
         <thead className="bg-surface-muted text-xs uppercase text-muted">
@@ -35,7 +39,7 @@ export function PaymentTable({ payments }: { payments: Payment[] }) {
           </tr>
         </thead>
         <tbody className="divide-y">
-          {payments.map((payment) => {
+          {pagination.rows.map((payment) => {
             const invoice = invoiceById.get(payment.invoiceId);
             const fullReference = payment.txRef || payment.reference || payment.providerTransactionId || payment.id;
 
@@ -50,7 +54,7 @@ export function PaymentTable({ payments }: { payments: Payment[] }) {
                 <td className="px-4 py-3 font-semibold">{formatNaira(payment.amount)}</td>
                 <td className="px-4 py-3">{payment.method}</td>
                 <td className="px-4 py-3">{payment.bankOrProvider ?? "School office"}</td>
-                <td className="px-4 py-3">{payment.paymentDate}</td>
+                <td className="px-4 py-3">{formatDate(payment.paymentDate)}</td>
                 <td className="px-4 py-3">
                   <Badge tone={payment.status === "Successful" ? "success" : payment.status === "Failed" ? "danger" : "warning"}>{payment.status}</Badge>
                 </td>
@@ -60,5 +64,7 @@ export function PaymentTable({ payments }: { payments: Payment[] }) {
         </tbody>
       </table>
     </div>
+    <TablePagination label="Payments" total={pagination.total} page={pagination.page} pageCount={pagination.pageCount} pageSize={pagination.pageSize} start={pagination.start} onPageChange={pagination.setPage} onPageSizeChange={pagination.setPageSize} />
+    </>
   );
 }

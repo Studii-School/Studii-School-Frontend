@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { SectionCard } from "@/components/dashboard/section-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
 import { useAcademics } from "@/features/academics/academics-context";
 import { useFinanceView } from "./use-finance-view";
@@ -64,10 +65,10 @@ export function InvoicesScreen() {
       <SectionCard title="Student invoices" description={`${filtered.length} result(s)`}>
         <div className="grid gap-3 border-b p-4 sm:grid-cols-2 xl:grid-cols-5">
           <Input placeholder="Search invoices" value={search} onChange={(event) => setSearch(event.target.value)} />
-          <select className="h-11 rounded-[10px] border bg-surface px-3" value={session} onChange={(event) => setSession(event.target.value)}><option>All</option>{[...new Set(invoices.map((item) => item.academicSession))].map((item) => <option key={item}>{item}</option>)}</select>
-          <select className="h-11 rounded-[10px] border bg-surface px-3" value={term} onChange={(event) => setTerm(event.target.value)}><option>All</option>{[...new Set(invoices.map((item) => item.term))].map((item) => <option key={item}>{item}</option>)}</select>
-          {!selectedClass && <select className="h-11 rounded-[10px] border bg-surface px-3" value={className} onChange={(event) => setClassName(event.target.value)}><option>All</option>{[...new Set(invoices.map((item) => item.className))].map((item) => <option key={item}>{item}</option>)}</select>}
-          <select className="h-11 rounded-[10px] border bg-surface px-3" value={status} onChange={(event) => setStatus(event.target.value as InvoiceStatus | "All")}><option>All</option>{["Unpaid", "Partially paid", "Paid", "Cancelled"].map((item) => <option key={item}>{item}</option>)}</select>
+          <Select label="Academic session" value={session} onChange={setSession} options={["All", ...new Set(invoices.map((item) => item.academicSession))].map((value) => ({ value, label: value }))}/>
+          <Select label="Term" value={term} onChange={setTerm} options={["All", ...new Set(invoices.map((item) => item.term))].map((value) => ({ value, label: value }))}/>
+          {!selectedClass && <Select label="Class" value={className} onChange={setClassName} options={["All", ...new Set(invoices.map((item) => item.className))].map((value) => ({ value, label: value }))}/>}
+          <Select label="Invoice status" value={status} onChange={(value) => setStatus(value as InvoiceStatus | "All")} options={["All", "Unpaid", "Partially paid", "Paid", "Cancelled"].map((value) => ({ value, label: value }))}/>
         </div>
         <InvoiceTable invoices={filtered} onRecord={setSelected} />
         <div className="flex items-center justify-between border-t p-4 text-xs text-muted"><span>Showing {filtered.length} of {invoices.length} · {label}</span><span>Page 1 of 1</span></div>

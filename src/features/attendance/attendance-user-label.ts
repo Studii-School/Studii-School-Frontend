@@ -16,3 +16,18 @@ export function attendanceUserLabel(
   if (user?.email?.trim()) return user.email.trim();
   return userId ? "Unknown user" : "-";
 }
+
+export function attendanceActorLabel(
+  userId: string | undefined,
+  academics: AcademicsState,
+  user?: { name?: string | null; email?: string | null; role?: string },
+  auditRole?: string,
+) {
+  const role = auditRole ?? user?.role;
+  const roleLabel = role === "SCHOOL_ADMIN" || role === "ADMIN"
+    ? "Admin"
+    : role === "TEACHER" || academics.teachers.some((teacher) => teacher.userId === userId)
+      ? "Teacher"
+      : "Staff";
+  return `${roleLabel} · ${attendanceUserLabel(userId, academics, user)}`;
+}

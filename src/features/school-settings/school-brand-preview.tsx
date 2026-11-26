@@ -1,8 +1,8 @@
 "use client";
 
-import Image from "next/image";
 import { GraduationCap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { SchoolBrandImage } from "@/components/shared/school-brand-image";
 import { useSchoolSettings } from "./school-settings-context";
 
 export function SchoolBrandPreview() {
@@ -11,20 +11,15 @@ export function SchoolBrandPreview() {
     <div className="min-w-0 max-w-full overflow-hidden rounded-xl border bg-surface">
       <div className="border-b bg-[var(--school-primary)] p-5 text-[var(--school-primary-foreground)]">
         <div className="flex min-w-0 items-center gap-3">
-          {settings.logoUrl ? (
-            <Image
-              unoptimized
-              width={48}
-              height={48}
-              src={settings.logoUrl}
-              alt="School logo"
-              className="size-12 shrink-0 rounded-[10px] bg-white object-contain p-1"
-            />
-          ) : (
-            <span className="flex size-12 shrink-0 items-center justify-center rounded-[10px] bg-white/15">
-              <GraduationCap size={24} />
-            </span>
-          )}
+          <SchoolBrandImage
+            logoUrl={settings.logoUrl}
+            crestUrl={settings.crestUrl}
+            width={48}
+            height={48}
+            alt="School logo"
+            className="size-12 shrink-0 rounded-[10px] bg-white object-contain p-1"
+            fallback={<span className="flex size-12 shrink-0 items-center justify-center rounded-[10px] bg-white/15"><GraduationCap size={24} /></span>}
+          />
           <div className="min-w-0">
             <p className="break-words font-bold">
               {settings.name || "Your school name"}

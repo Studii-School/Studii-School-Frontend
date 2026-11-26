@@ -73,7 +73,6 @@ type UpdateSchoolSettingsPayload = Partial<{
   historicalEditingEnabled: boolean;
 }>;
 
-type AssetType = "logo" | "crest" | "favicon";
 type AcademicSettingsSnapshot = Pick<SchoolSettings, "currentAcademicSession" | "currentTerm" | "resumptionDate" | "closingDate" | "historicalEditingEnabled">;
 
 const validSchoolTypes: SchoolType[] = ["Day School", "Boarding School", "Day and Boarding School"];
@@ -238,16 +237,6 @@ function mapToBackend(settings: SchoolSettings): UpdateSchoolSettingsPayload {
   };
 }
 
-function isPersistableUrl(value?: string) {
-  if (!value || value.startsWith("data:")) return false;
-  try {
-    new URL(value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export async function getSchoolSettings(schoolId?: string, user?: AuthUser | null): Promise<SchoolSettings> {
   const endpoint = endpointFor(schoolId, user);
   if (!hasSession() || !endpoint) {
@@ -277,13 +266,6 @@ export async function getSchoolSettings(schoolId?: string, user?: AuthUser | nul
   return settings;
 }
 
-export async function saveSchoolAsset(schoolId: string, assetType: AssetType, url: string) {
-  return apiRequest<SchoolSettingsResponse>(`/schools/${schoolId}/assets`, {
-    method: "POST",
-    body: JSON.stringify({ assetType, url }),
-  });
-}
-
 export async function saveSchoolSettings(settings: SchoolSettings, schoolId = settings.id): Promise<SchoolSettings> {
   if (!hasSession()) {
     const offline = { ...settings, updatedAt: new Date().toISOString() };
@@ -307,18 +289,6 @@ export async function saveSchoolSettings(settings: SchoolSettings, schoolId = se
     closingDate: settings.closingDate ?? updated.closingDate,
     historicalEditingEnabled: settings.historicalEditingEnabled ?? updated.historicalEditingEnabled ?? false,
   };
-
-  const assets: Array<[AssetType, string | undefined]> = [
-    ["logo", settings.logoUrl],
-    ["crest", settings.crestUrl],
-    ["favicon", settings.faviconUrl],
-  ];
-
-  await Promise.all(
-    assets
-      .filter(([, url]) => isPersistableUrl(url))
-      .map(([assetType, url]) => saveSchoolAsset(targetSchoolId, assetType, url as string)),
-  );
 
   writeAcademicSettings(merged, targetSchoolId);
   return merged;

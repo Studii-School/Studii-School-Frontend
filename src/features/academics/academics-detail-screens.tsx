@@ -16,9 +16,11 @@ import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/number-input";
 import { MultiSelect, Select } from "@/components/ui/select";
 import { SidePanel } from "@/components/ui/side-panel";
+import { ButtonTabs } from "@/components/ui/tabs";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { TeacherTimetableModal } from "@/features/timetable/timetable-screens";
 import { formatNaira } from "@/lib/currency";
+import { formatDate } from "@/lib/date-utils";
 import { useAcademics } from "./academics-context";
 import { PersonNameLink } from "@/features/people/person-name-link";
 import {
@@ -45,7 +47,7 @@ const commonStaffRoles = [
 
 function displayDate(value?: string | null) {
   if (!value) return "Not provided";
-  return new Date(value).toLocaleDateString();
+  return formatDate(value);
 }
 
 function className(item?: Pick<SchoolClass, "name" | "displayName" | "section">) {
@@ -70,7 +72,7 @@ function DetailGrid({ rows }: { rows: Array<[string, React.ReactNode]> }) {
       {rows.map(([label, value]) => (
         <div key={label} className="rounded-xl bg-surface-muted p-4">
           <p className="text-xs text-muted">{label}</p>
-          <p className="mt-1 font-semibold">{value || "Not provided"}</p>
+          <p className="mt-1 break-words font-semibold">{value || "Not provided"}</p>
         </div>
       ))}
     </div>
@@ -143,11 +145,12 @@ export function AdminClassDetailScreen({ classId }: { classId: string }) {
 }
 
 export function AdminTeacherDetailScreen({ teacherId }: { teacherId: string }) {
-  const { state, isLoading, removeTeacherAssignment, removeStaff } = useAcademics();
+  const { state, isLoading, removeTeacherAssignment, removeStaff, setStaffStatus } = useAcademics();
   const { confirm, toast } = useActionFeedback();
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [timetableOpen, setTimetableOpen] = useState(false);
+  const [tab, setTab] = useState<"Overview" | "Assignments" | "Account">("Overview");
   const staff =
     state.staff.find((item) => item.userId === teacherId || item.id === teacherId) ??
     state.staff.find((item) => item.email === teacherId);
@@ -232,31 +235,29 @@ export function AdminTeacherDetailScreen({ teacherId }: { teacherId: string }) {
       },
     });
   };
+  const changeStatus = (nextStatus: "ACTIVE" | "SUSPENDED") => {
+    if (nextStatus === staff.status) return;
+    confirm({
+      title: `${nextStatus === "ACTIVE" ? "Reactivate" : "Suspend"} ${staff.fullName}?`,
+      description: nextStatus === "ACTIVE" ? "This staff member will regain access." : "This staff member will lose access until reactivated.",
+      confirmLabel: nextStatus === "ACTIVE" ? "Reactivate staff" : "Suspend staff",
+      destructive: nextStatus === "SUSPENDED",
+      onConfirm: async () => {
+        await setStaffStatus(staff.userId, nextStatus);
+        toast(nextStatus === "ACTIVE" ? "Staff member reactivated." : "Staff member suspended.", "success");
+      },
+    });
+  };
 
   return (
     <>
       <PageHeader
         title={staff.fullName}
         description={`${staff.employeeNumber ?? staff.userId} - ${staff.jobTitle}`}
-        action={
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => setEditing(true)}>
-              <Pencil size={15} />Edit details
-            </Button>
-            {staff.isTeachingStaff && (
-              <>
-                <Button variant="outline" onClick={() => setTimetableOpen(true)}>View timetable</Button>
-                <Link className={buttonStyles("outline")} href={`/admin/staff/assignments?teacher=${staff.userId}`}>
-                  Assign classes
-                </Link>
-              </>
-            )}
-            <Button variant="danger" onClick={deleteTeacher}><Trash2 size={15} />Delete {staff.isTeachingStaff ? "teacher" : "staff"}</Button>
-          </div>
-        }
+        action={<Button variant="outline" onClick={() => setEditing(true)}><Pencil size={15} />Edit details</Button>}
       />
 
-      <Card className="mb-5 p-5">
+      <Card className="mb-5 min-w-0 p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
           <Avatar
             initials={`${staff.firstName[0] ?? ""}${staff.lastName[0] ?? ""}`}
@@ -270,17 +271,37 @@ export function AdminTeacherDetailScreen({ teacherId }: { teacherId: string }) {
               <Badge tone={staff.isTeachingStaff ? "primary" : "neutral"}>
                 {staff.isTeachingStaff ? "Teaching staff" : "Non-teaching staff"}
               </Badge>
+              <Badge tone={staff.status === "ACTIVE" ? "success" : "warning"}>{staff.status}</Badge>
             </div>
-            <p className="mt-1 text-sm text-muted">
+            <p className="mt-1 break-words text-sm text-muted">
               {staff.jobTitle} &middot; {staff.department ?? "No department"} &middot; {staff.email}
             </p>
           </div>
+          <Select
+            className="w-full sm:max-w-52"
+            label="More staff actions"
+            value=""
+            onChange={(value) => changeStatus(value as "ACTIVE" | "SUSPENDED")}
+            placeholder="More Actions"
+            options={[
+              { value: "ACTIVE", label: "Mark Active", disabled: staff.status === "ACTIVE" },
+              { value: "SUSPENDED", label: "Suspend Staff", disabled: staff.status === "SUSPENDED" },
+            ]}
+          />
         </div>
       </Card>
 
       {editing && <StaffEditModal staff={staff} onClose={() => setEditing(false)} />}
       {timetableOpen && <TeacherTimetableModal teacherUserId={staff.userId} teacherName={staff.fullName} onClose={() => setTimetableOpen(false)} />}
 
+      <ButtonTabs
+        label="Staff profile tabs"
+        items={staff.isTeachingStaff ? ["Overview", "Assignments", "Account"] as const : ["Overview", "Account"] as const}
+        value={tab}
+        onChange={setTab}
+      />
+
+      {tab === "Overview" && <>
       <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Card className="p-4"><p className="text-xs text-muted">Status</p><Badge tone={staff.status === "ACTIVE" ? "success" : "warning"}>{staff.status}</Badge></Card>
         <Card className="p-4"><p className="text-xs text-muted">Role</p><b>{staff.role}</b></Card>
@@ -288,7 +309,7 @@ export function AdminTeacherDetailScreen({ teacherId }: { teacherId: string }) {
         <Card className="p-4"><p className="text-xs text-muted">Subjects</p><b>{subjects.length}</b></Card>
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+      <div className="grid gap-5">
         <SectionCard title="Personal information">
           <div className="p-5">
             <DetailGrid
@@ -309,21 +330,15 @@ export function AdminTeacherDetailScreen({ teacherId }: { teacherId: string }) {
           </div>
         </SectionCard>
 
-        <SectionCard title="Account">
-          <div className="p-5">
-            <StaffPhotoEditor staffId={staff.id} name={staff.fullName} initialValue={staff.photoUrl} />
-            <DetailGrid
-              rows={[
-                ["Account status", staff.status],
-                ["Job title", staff.jobTitle],
-                ["Last updated", displayDate(staff.updatedAt)],
-              ]}
-            />
-          </div>
-        </SectionCard>
       </div>
+      </>}
 
-      <div className="mt-5 grid gap-5 lg:grid-cols-3">
+      {tab === "Assignments" && staff.isTeachingStaff && <>
+      <div className="mb-5 flex flex-wrap gap-2">
+        <Link className={buttonStyles("outline")} href={`/admin/staff/assignments?teacher=${staff.userId}`}>Assign classes</Link>
+        <Button variant="outline" onClick={() => setTimetableOpen(true)}>View timetable</Button>
+      </div>
+      <div className="grid gap-5 lg:grid-cols-3">
         <ClassOwnershipSection
           title="Class owner for"
           classIds={classOwnerIds}
@@ -376,12 +391,25 @@ export function AdminTeacherDetailScreen({ teacherId }: { teacherId: string }) {
           </div>
         </SectionCard>
       </div>
+      </>}
 
-      <div className="mt-5 flex justify-end">
-        <Link href="/admin/staff">
-          <Button variant="outline">Back to staff</Button>
-        </Link>
-      </div>
+      {tab === "Account" && <div className="grid gap-5 lg:grid-cols-2">
+        <SectionCard title="Account">
+          <div className="space-y-5 p-5">
+            <StaffPhotoEditor staffId={staff.id} name={staff.fullName} initialValue={staff.photoUrl} />
+            <DetailGrid rows={[
+              ["Account status", staff.status],
+              ["Job title", staff.jobTitle],
+              ["Last updated", displayDate(staff.updatedAt)],
+            ]} />
+            <Button variant="outline" onClick={() => changeStatus(staff.status === "SUSPENDED" ? "ACTIVE" : "SUSPENDED")}>{staff.status === "SUSPENDED" ? "Reactivate staff" : "Suspend staff"}</Button>
+          </div>
+        </SectionCard>
+        <SectionCard title="Remove staff member" description="Move this staff member to Trash for 3 months.">
+          <div className="p-5"><Button variant="danger" onClick={deleteTeacher}><Trash2 size={15} />Delete {staff.isTeachingStaff ? "teacher" : "staff"}</Button></div>
+        </SectionCard>
+      </div>}
+
     </>
   );
 }

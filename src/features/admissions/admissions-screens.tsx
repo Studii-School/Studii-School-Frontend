@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { ArrowLeft, CalendarCheck, ClipboardList, ExternalLink, Plus, Save, Settings2, Trash2, UserCheck } from "lucide-react";
+import { CalendarCheck, ClipboardList, ExternalLink, Plus, Save, Settings2, Trash2, UserCheck } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { SearchInput } from "@/components/shared/search-input";
 import { Badge } from "@/components/ui/badge";
@@ -10,12 +10,14 @@ import { Button, buttonStyles } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ClickableTableRow } from "@/components/ui/clickable-table-row";
+import { TablePagination, usePaginatedRows } from "@/components/ui/table-pagination";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useAcademics } from "@/features/academics/academics-context";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import Link from "@/features/navigation-progress/navigation-progress-link";
 import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
+import { formatDate } from "@/lib/date-utils";
 import { useAdmissions } from "./admissions-context";
 import type { SchoolClass } from "@/features/academics/academics.types";
 import type { AdmissionApplication, AdmissionFormField, AdmissionFormFieldType, AdmissionInput, AdmissionStatus } from "./admissions.types";
@@ -24,7 +26,6 @@ const statuses: AdmissionStatus[] = ["NEW", "UNDER_REVIEW", "INTERVIEW", "ACCEPT
 const statusLabel = (status: AdmissionStatus) => status.replaceAll("_", " ");
 const statusTone = (status: AdmissionStatus) => status === "ENROLLED" || status === "ACCEPTED" ? "success" as const : status === "REJECTED" ? "danger" as const : status === "INTERVIEW" ? "warning" as const : "neutral" as const;
 const fullName = (item: Pick<AdmissionApplication, "firstName" | "middleName" | "lastName">) => [item.firstName, item.middleName, item.lastName].filter(Boolean).join(" ");
-const formatDate = (value: string) => new Date(value).toLocaleDateString([], { dateStyle: "medium" });
 const publicFormPath = "/admissions/apply";
 const fieldTypes: Array<{ value: AdmissionFormFieldType; label: string }> = [
   { value: "text", label: "Text" },
@@ -50,6 +51,7 @@ export function AdmissionsDashboard() {
     const className = state.classes.find((entry) => entry.id === item.classId)?.displayName ?? "";
     return (!selectedStatus || selectedStatus === "ALL" || item.status === selectedStatus) && (!query || `${fullName(item)} ${item.parentName} ${item.parentPhone} ${className} ${item.applicationNumber}`.toLowerCase().includes(query.toLowerCase()));
   }), [applications, query, selectedStatus, state.classes]);
+  const pagination = usePaginatedRows(visible, `${selectedStatus}|${query}`);
   const cards: Array<{ label: string; status: AdmissionStatus | "ALL"; count: number; description: string }> = [
     { label: "All applications", status: "ALL", count: applications.length, description: "Complete admissions register" },
     { label: "New", status: "NEW", count: applications.filter((item) => item.status === "NEW").length, description: "Fresh submissions to screen" },
@@ -64,17 +66,18 @@ export function AdmissionsDashboard() {
       <PageHeader
         title="Admissions"
         description="Run applications through screening, interviews, decisions and enrollment."
+        showBack={Boolean(selectedStatus)}
+        onBack={() => setSelectedStatus("")}
         action={<div className="flex flex-wrap gap-2"><Link href={publicFormPath} className={buttonStyles("outline")}><ExternalLink size={16} />Public form</Link><Link href="/admin/admissions/register" className={buttonStyles("outline")}><Plus size={16} />Register applicant</Link><Link href="/admin/admissions/new" className={buttonStyles()}><Settings2 size={16} />Design form</Link></div>}
       />
       {!selectedStatus ? <><Card className="mb-5 p-4"><div className="flex flex-wrap items-center gap-3 text-sm"><span className="inline-flex items-center gap-2 font-semibold"><CalendarCheck size={16} />Admissions pipeline</span>{cards.slice(1).map((card)=><button key={card.label} type="button" onClick={()=>setSelectedStatus(card.status)} className="rounded-[8px] border bg-surface px-3 py-2 font-medium hover:border-[var(--school-primary)]">{card.label}: {card.count}</button>)}</div></Card><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{cards.map((card)=><button key={card.label} type="button" onClick={()=>setSelectedStatus(card.status)} className="min-h-36 rounded-[8px] border bg-surface p-4 text-left transition hover:border-[var(--school-primary)] hover:shadow-sm"><ClipboardList className="text-[var(--school-primary)]" size={20}/><p className="mt-3 font-semibold">{card.label}</p><p className="mt-1 text-xs text-muted">{card.description}</p><p className="mt-4 text-2xl font-bold">{card.count}</p></button>)}</div></> : <>
-      <Button className="mb-4" type="button" variant="outline" onClick={() => setSelectedStatus("")}><ArrowLeft size={16}/>Back to admission cards</Button>
       <Card className="mb-5 p-4"><SearchInput value={query} onChange={setQuery} placeholder="Search applicant, parent, phone, class or application no." /></Card>
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[780px] text-left text-sm">
             <thead className="bg-surface-muted text-xs uppercase text-muted"><tr>{["Applicant", "Class", "Parent", "Phone", "Submitted", "Status", "Action"].map((item) => <th key={item} className="px-5 py-3">{item}</th>)}</tr></thead>
             <tbody className="divide-y">
-              {visible.map((item) => (
+              {pagination.rows.map((item) => (
                 <ClickableTableRow key={item.id} href={`/admin/admissions/${item.id}`} label={fullName(item)}>
                   <td className="px-5 py-4"><p className="font-semibold">{fullName(item)}</p><p className="text-xs text-muted">{item.applicationNumber}</p></td>
                   <td className="px-5 py-4">{state.classes.find((entry) => entry.id === item.classId)?.displayName ?? "Unknown class"}</td>
@@ -88,6 +91,7 @@ export function AdmissionsDashboard() {
             </tbody>
           </table>
         </div>
+        <TablePagination label="Admissions" total={pagination.total} page={pagination.page} pageCount={pagination.pageCount} pageSize={pagination.pageSize} start={pagination.start} onPageChange={pagination.setPage} onPageSizeChange={pagination.setPageSize} />
         {!visible.length && <p className="p-8 text-center text-sm text-muted">No admission records found.</p>}
       </Card></>}
     </>
@@ -325,7 +329,7 @@ export function PublicAdmissionFormScreen() {
         <div className="mx-auto flex max-w-5xl flex-col gap-6 px-4 py-8 sm:flex-row sm:items-center sm:justify-between">
           <BrandMark settings={settings} />
           <div className="max-w-xl sm:text-right">
-            <h1 className="text-3xl font-bold tracking-tight">{formConfig.title}</h1>
+            <h1 className="break-words text-2xl font-bold tracking-tight sm:text-3xl">{formConfig.title}</h1>
             <p className="mt-2 text-sm leading-6 text-muted">{formConfig.intro}</p>
           </div>
         </div>
@@ -335,7 +339,7 @@ export function PublicAdmissionFormScreen() {
           <div className="grid gap-5 sm:grid-cols-2">
             {fields.map((field) => <PublicFormField key={field.key} field={field} value={valueFor(field)} classes={classes} photoUrl={form.photoUrl} onImage={(value) => set("photoUrl", value)} onChange={(value) => isCustomField(field.key) ? setCustom(field.key, value) : set(field.key as keyof AdmissionInput, value)} onClass={(value) => { const selected = classes.find((item) => item.id === value); setForm((current) => ({ ...current, classId: value, schoolLevel: selected?.level ?? current.schoolLevel })); }} />)}
           </div>
-          <div className="mt-6 flex justify-end"><Button disabled={busy} onClick={() => void submit()}>{busy ? "Submitting..." : "Submit application"}</Button></div>
+          <div className="mt-6 flex justify-end"><Button className="w-full sm:w-auto" disabled={busy} onClick={() => void submit()}>{busy ? "Submitting..." : "Submit application"}</Button></div>
         </Card>
       </section>
     </main>
@@ -343,7 +347,7 @@ export function PublicAdmissionFormScreen() {
 }
 
 function BrandMark({ settings }: { settings: ReturnType<typeof useSchoolSettings>["settings"] }) {
-  return <div className="flex items-center gap-3">{settings.logoUrl ? <img src={settings.logoUrl} alt={`${settings.name} logo`} className="size-16 rounded-lg border bg-white object-contain p-2" /> : <span className="flex size-16 items-center justify-center rounded-lg bg-[var(--school-primary)] text-xl font-bold text-[var(--school-primary-foreground)]">{(settings.shortName || settings.name || "S").slice(0, 2).toUpperCase()}</span>}<div><p className="text-xl font-bold">{settings.name}</p>{settings.motto && <p className="text-sm text-muted">{settings.motto}</p>}</div></div>;
+  return <div className="flex min-w-0 items-center gap-3">{settings.logoUrl ? <img src={settings.logoUrl} alt={`${settings.name} logo`} className="size-16 shrink-0 rounded-lg border bg-white object-contain p-2" /> : <span className="flex size-16 shrink-0 items-center justify-center rounded-lg bg-[var(--school-primary)] text-xl font-bold text-[var(--school-primary-foreground)]">{(settings.shortName || settings.name || "S").slice(0, 2).toUpperCase()}</span>}<div className="min-w-0"><p className="break-words text-xl font-bold">{settings.name}</p>{settings.motto && <p className="break-words text-sm text-muted">{settings.motto}</p>}</div></div>;
 }
 
 function PublicFormField({ field, value, classes, photoUrl, onChange, onClass, onImage }: { field: AdmissionFormField; value: string; classes: SchoolClass[]; photoUrl?: string; onChange(value: string): void; onClass(value: string): void; onImage(value: string): void }) {

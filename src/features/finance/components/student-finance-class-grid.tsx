@@ -3,6 +3,7 @@
 import { ArrowRight, GraduationCap } from "lucide-react";
 import Link from "@/features/navigation-progress/navigation-progress-link";
 import { Card } from "@/components/ui/card";
+import { BrandIcon } from "@/components/ui/brand-icon";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useAcademics } from "@/features/academics/academics-context";
 import { sortClasses } from "@/features/academics/academics.class-utils";
@@ -30,7 +31,7 @@ export function StudentFinanceClassGrid({ baseHref = "/admin/finance/payments" }
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {classCards.map((schoolClass) => {
+      {classCards.map((schoolClass, index) => {
         const invoices = billableInvoices(periodInvoices.filter((invoice) => invoice.classId === schoolClass.id));
         const expected = invoices.reduce((sum, invoice) => sum + invoice.totalAmount, 0);
         const outstanding = invoices.reduce((sum, invoice) => sum + invoice.outstandingBalance, 0);
@@ -48,9 +49,9 @@ export function StudentFinanceClassGrid({ baseHref = "/admin/finance/payments" }
                   <p className="mt-1 text-sm text-muted">{schoolClass.studentCount} student(s)</p>
                   <p className="mt-1 text-xs text-muted">{label}</p>
                 </div>
-                <span className="rounded-[8px] bg-[color-mix(in_srgb,var(--school-primary)_12%,white)] p-2 text-[var(--school-primary)]">
+                <BrandIcon tone={(["primary", "secondary", "accent"] as const)[index % 3]} className="size-10">
                   <GraduationCap size={18} />
-                </span>
+                </BrandIcon>
               </div>
               <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
                 <span>

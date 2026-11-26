@@ -8,6 +8,7 @@ import { QuickActions } from "@/components/dashboard/quick-actions";
 import { SectionCard } from "@/components/dashboard/section-card";
 import { SimpleTable } from "@/components/dashboard/simple-table";
 import { Card } from "@/components/ui/card";
+import { BrandIcon, type BrandTone } from "@/components/ui/brand-icon";
 import { Select } from "@/components/ui/select";
 import { useAcademics } from "@/features/academics/academics-context";
 import { getClassesForTeacher } from "@/features/academics/academics.selectors";
@@ -44,6 +45,7 @@ import type { TimetableDay, TimetableEntry } from "@/features/timetable/timetabl
 import { readStoredUser } from "@/lib/auth";
 import { readStoredToken } from "@/lib/api";
 import { formatNaira } from "@/lib/currency";
+import { formatDate, formatTime } from "@/lib/date-utils";
 import type { TableRow } from "@/types";
 import type { PortalRole } from "./dashboard-widget.types";
 
@@ -53,19 +55,32 @@ type MetricData = {
   icon: React.ComponentType<{ size?: number }>;
 };
 
-function Metric({ title, data }: { title: string; data: MetricData }) {
+const metricMarkers: Record<BrandTone, string> = {
+  primary: "bg-[var(--school-primary)]",
+  secondary: "bg-[var(--school-secondary)]",
+  accent: "bg-[var(--school-accent)]",
+};
+
+function metricBrandTone(widgetId: string): BrandTone {
+  if (/outstanding|overdue|pending|draft|due|reconciliation/.test(widgetId)) return "accent";
+  if (/attendance|collected|payment|balance/.test(widgetId)) return "secondary";
+  return "primary";
+}
+
+function Metric({ title, data, tone = "primary" }: { title: string; data: MetricData; tone?: BrandTone }) {
   const Icon = data.icon;
   return (
-    <Card className="h-full p-3">
+    <Card className="relative h-full overflow-hidden p-4 shadow-sm">
+      <span aria-hidden="true" className={`absolute inset-x-0 top-0 h-1 ${metricMarkers[tone]}`} />
       <div className="flex justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm text-muted">{title}</p>
           <p className="mt-1.5 break-words text-xl font-bold">{data.value}</p>
           <p className="mt-1.5 text-xs text-muted">{data.note}</p>
         </div>
-        <span className="h-fit shrink-0 rounded-[10px] bg-[color-mix(in_srgb,var(--school-primary)_12%,white)] p-2 text-[var(--school-primary)]">
+        <BrandIcon tone={tone} className="size-10 rounded-xl">
           <Icon size={18} />
-        </span>
+        </BrandIcon>
       </div>
     </Card>
   );
@@ -134,6 +149,7 @@ export function DashboardWidgetContent({
     startDate: selectedSession?.startDate || settings.resumptionDate,
     endDate: selectedSession?.endDate || settings.closingDate,
     requireStartDate: Boolean(selectedSession),
+    isCurrentPeriod: scope.isCurrentPeriod,
   };
   const selectedPeriodDateScope = {
     startDate: selectedTerm?.startDate || settings.resumptionDate,
@@ -184,7 +200,7 @@ export function DashboardWidgetContent({
   const periodNeedsReview = periodReconciliationTransactions.filter((item) => !["Auto-matched", "Manually matched"].includes(item.status)).length;
   const periodReconciliationRate = periodReconciliationTransactions.length ? Math.round(((periodReconciliationTransactions.length - periodNeedsReview) / periodReconciliationTransactions.length) * 100) : 0;
   const attendanceSummary = selectedStudentId
-    ? getAttendanceSummaryForStudent(sessionRegisters, selectedStudentId, attendancePeriod)
+    ? getAttendanceSummaryForStudent(sessionRegisters, selectedStudentId, { ...attendancePeriod, studentStartDate: selectedStudent?.admissionDate })
     : summarizeRegister(todayRegisters[0]);
   useEffect(() => {
     let active = true;
@@ -285,7 +301,7 @@ export function DashboardWidgetContent({
     },
     "student-attendance": {
       value: `${attendanceSummary.percentage}%`,
-      note: attendanceSummary.total ? `${attendanceSummary.present} present · ${attendanceSummary.unmarked} unmarked school days` : "Session has not started",
+      note: attendanceSummary.total ? `${attendanceSummary.present} present · ${attendanceSummary.autoAbsent ?? 0} auto absent school days` : "Session has not started",
       icon: CalendarCheck,
     },
     "student-latest-result": {
@@ -300,11 +316,11 @@ export function DashboardWidgetContent({
     },
     "student-fee-balance": {
       value: formatNaira(studentOutstanding),
-      note: studentInvoice ? `Next due ${studentInvoice.dueDate}` : "No unpaid fees",
+      note: studentInvoice ? `Next due ${formatDate(studentInvoice.dueDate)}` : "No unpaid fees",
       icon: WalletCards,
     },
     "student-next-payment": {
-      value: studentInvoice?.dueDate ?? "No balance due",
+      value: studentInvoice?.dueDate ? formatDate(studentInvoice.dueDate) : "No balance due",
       note: "Next payment deadline",
       icon: CalendarCheck,
     },
@@ -326,18 +342,19 @@ export function DashboardWidgetContent({
       icon: WalletCards,
     },
     "parent-next-due": {
-      value:
-        parentInvoices
+      value: (() => {
+        const dueDate = parentInvoices
           .filter((item) => item.outstandingBalance > 0)
-          .sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0]?.dueDate ??
-        "No balance due",
+          .sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0]?.dueDate;
+        return dueDate ? formatDate(dueDate) : "No balance due";
+      })(),
       note: "Next family due date",
       icon: CalendarCheck,
     },
   };
 
   const metric = metricMap[widgetId];
-  if (metric) return <Metric title={title} data={metric} />;
+  if (metric) return <Metric title={title} data={metric} tone={metricBrandTone(widgetId)} />;
 
   if (widgetId.endsWith("events")) {
     return <DashboardEvents role={role} selectedClass={selectedClass?.displayName} />;
@@ -347,6 +364,7 @@ export function DashboardWidgetContent({
     return (
       <SectionCard
         title={title}
+        tone="primary"
         action={
           role === "admin" ? (
             <a
@@ -360,9 +378,12 @@ export function DashboardWidgetContent({
       >
         <ul className="divide-y px-5">
           {visibleAnnouncements.slice(0, 4).map((item) => (
-            <li className="py-3" key={item.id}>
-              <p className="text-sm font-medium">{item.title}</p>
-              <p className="text-xs text-muted">{item.summary}</p>
+            <li className="flex items-start gap-2.5 py-3" key={item.id}>
+              <span aria-hidden="true" className="mt-1.5 size-2 shrink-0 rounded-full bg-[var(--school-accent)]" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{item.title}</p>
+                <p className="text-xs text-muted">{item.summary}</p>
+              </div>
             </li>
           ))}
           {!visibleAnnouncements.length && (
@@ -377,15 +398,18 @@ export function DashboardWidgetContent({
 
   if (widgetId === "admin-attendance" || widgetId === "teacher-class-attendance") {
     return (
-      <SectionCard title={title}>
+      <SectionCard title={title} tone="secondary">
         <div className="p-5">
-          <p className="text-3xl font-bold">
+          <div className="flex items-center gap-3">
+            <BrandIcon tone="secondary" className="size-10 rounded-xl"><CalendarCheck size={20} /></BrandIcon>
+            <p className="text-3xl font-bold">
             {todayRegisters.length
               ? `${Math.round((submittedToday.length / todayRegisters.length) * 100)}%`
               : selectedRegister
                 ? `${summarizeRegister(selectedRegister).percentage}%`
                 : "No records"}
-          </p>
+            </p>
+          </div>
           <p className="mt-3 text-xs text-muted">
             {todayRegisters.length
               ? `${submittedToday.length} of ${todayRegisters.length} registers submitted today`
@@ -433,7 +457,7 @@ export function DashboardWidgetContent({
             const schoolClass = academics.classes.find((item) => item.id === entry.classId);
             const subject = academics.subjects.find((item) => item.id === entry.subjectId);
             return {
-              time: `${entry.startTime} - ${entry.endTime}`,
+              time: `${formatTime(entry.startTime)} - ${formatTime(entry.endTime)}`,
               class: schoolClass?.displayName ?? "Class",
               subject: subject?.name ?? "Subject",
               room: entry.room ?? "Not set",
@@ -491,7 +515,7 @@ export function DashboardWidgetContent({
             <div key={receipt.id}>
               <p className="font-semibold">{receipt.receiptNumber}</p>
               <p className="text-sm text-muted">
-                {formatNaira(receipt.amount)} · {receipt.paymentDate}
+                {formatNaira(receipt.amount)} · {formatDate(receipt.paymentDate)}
               </p>
             </div>
           ))}
@@ -546,6 +570,7 @@ export function DashboardWidgetContent({
     return (
       <Metric
         title={title}
+        tone="accent"
         data={{
           value: String(periodNeedsReview),
           note: `${periodReconciliationRate}% matched in selected term`,
@@ -559,6 +584,7 @@ export function DashboardWidgetContent({
     return (
       <Metric
         title={title}
+        tone="accent"
         data={{
           value: String(periodInvoices.filter((item) => item.status === "Overdue").length),
           note: "Require follow-up in selected term",

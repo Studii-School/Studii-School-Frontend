@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { pageTabClass } from "@/components/ui/tabs";
 import { useAcademics } from "@/features/academics/academics-context";
 import type { SchoolLevel, StudentStatus } from "@/features/academics/academics.types";
 import { useAcademicPeriod } from "@/features/academic-period/academic-period-context";
@@ -484,15 +485,12 @@ export function StudentImportPage() {
         Import target: <strong className="text-foreground">{selectedSession?.name ?? "No session selected"}</strong>
         {selectedTerm && <> · {selectedTerm.name.toLowerCase()} term</>}. Student class enrollment follows the selected session; term-based records are managed separately.
       </p>
-      <div className="mb-5 flex max-w-full gap-2 overflow-x-auto">
+      <div className="portal-page-tabs mb-5 flex max-w-full gap-1 overflow-x-auto border-b" aria-label="Import progress">
         {["UPLOAD", "MAP", "PREVIEW", "SUMMARY"].map((item, index) => (
           <div
             key={item}
-            className={`min-w-max rounded-full px-3 py-2 text-sm ${
-              item === step
-                ? "bg-[var(--school-primary)] text-[var(--school-primary-foreground)]"
-                : "bg-surface-muted text-muted"
-            }`}
+            aria-current={item === step ? "step" : undefined}
+            className={`${pageTabClass(item === step)} min-w-max`}
           >
             {index + 1}. {item[0] + item.slice(1).toLowerCase()}
           </div>

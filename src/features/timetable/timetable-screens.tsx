@@ -20,6 +20,7 @@ import { academicTermLabel } from "@/features/academic-period/academic-period.ty
 import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
 import { readStoredToken } from "@/lib/api";
 import { readStoredUser } from "@/lib/auth";
+import { formatTime } from "@/lib/date-utils";
 import { timetableRepository } from "./timetable.repository";
 import { TIMETABLE_STORAGE_KEY } from "./timetable.storage";
 import { visibleTimetableEntries } from "./timetable-period-utils";
@@ -32,7 +33,7 @@ const fallbackStudentId = "student-yusuf";
 const fallbackGuardianId = "guardian-001";
 
 const dayLabel = (day: TimetableDay) => day.charAt(0) + day.slice(1).toLowerCase();
-const timeRange = (entry: TimetableEntry) => `${entry.startTime} - ${entry.endTime}`;
+const timeRange = (entry: TimetableEntry) => `${formatTime(entry.startTime)} - ${formatTime(entry.endTime)}`;
 const hasBackendSession = () => Boolean(readStoredToken());
 
 function currentUserId() {

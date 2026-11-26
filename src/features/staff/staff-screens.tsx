@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { ArrowLeft, BookOpenCheck, BriefcaseBusiness, GraduationCap, Plus, Trash2, Upload, UserRoundCog } from "lucide-react";
+import { BookOpenCheck, BriefcaseBusiness, GraduationCap, Plus, Upload, UserRoundCog } from "lucide-react";
 import Link from "@/features/navigation-progress/navigation-progress-link";
 import { PersonNameLink } from "@/features/people/person-name-link";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -10,6 +10,7 @@ import { ProfileImageField } from "@/components/shared/profile-image-field";
 import { SearchInput } from "@/components/shared/search-input";
 import { Badge } from "@/components/ui/badge";
 import { ClickableTableRow } from "@/components/ui/clickable-table-row";
+import { TablePagination, usePaginatedRows } from "@/components/ui/table-pagination";
 import { Avatar } from "@/components/ui/avatar";
 import { Button, buttonStyles } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -63,8 +64,8 @@ const normaliseKey = (value?: string) => value?.trim().replace(/\s+/g, " ").toLo
 const normalisePhone = (value?: string) => value?.replace(/\D/g, "") ?? "";
 
 export function StaffHrScreen() {
-  const { state, createStaff, setStaffStatus, removeStaff } = useAcademics();
-  const { confirm, toast } = useActionFeedback();
+  const { state, createStaff } = useAcademics();
+  const { toast } = useActionFeedback();
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<StaffInput>(blankStaff);
   const [query, setQuery] = useState("");
@@ -103,6 +104,7 @@ export function StaffHrScreen() {
       return groupMatch && (!normalized || haystack.includes(normalized)) && (!role || item.jobTitle === role) && (!status || item.status === status);
     });
   }, [query, role, selectedGroup, state.staff, status]);
+  const pagination = usePaginatedRows(rows, `${selectedGroup}|${query}|${role}|${status}`);
 
   const patch = <K extends keyof StaffInput>(key: K, value: StaffInput[K]) => setForm((current) => ({ ...current, [key]: value }));
 
@@ -167,19 +169,6 @@ export function StaffHrScreen() {
       toast(caught instanceof Error ? caught.message : "Staff import failed.", "error");
     }
   };
-  const deleteStaff = (item: (typeof state.staff)[number]) => {
-    confirm({
-      title: `Delete ${item.isTeachingStaff ? "teacher" : "staff member"}?`,
-      description: `${item.fullName} will be removed from active staff and moved to Trash for 3 months.`,
-      confirmLabel: "Delete",
-      destructive: true,
-      onConfirm: async () => {
-        await removeStaff(item.userId);
-        toast("Staff member moved to Trash.", "success");
-      },
-    });
-  };
-
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError("");
@@ -219,6 +208,8 @@ export function StaffHrScreen() {
       <PageHeader
         title="Staff & HR"
         description="Manage teaching and non-teaching staff in one clear school directory."
+        showBack={Boolean(selectedGroup)}
+        onBack={() => setSelectedGroup("")}
         action={<div className="flex flex-wrap gap-2"><input ref={importInputRef} className="sr-only" type="file" accept=".csv,text/csv" onChange={(event) => { setImportDialogOpen(false); void importStaff(event.target.files?.[0]).finally(() => { event.target.value = ""; }); }}/><Button variant="outline" onClick={() => setImportDialogOpen(true)}><Upload size={16} />Import Staff</Button><Link href="/admin/staff/add" className={buttonStyles()}><Plus size={16} />Add Staff</Link></div>}
       />
       <CsvImportDialog
@@ -230,8 +221,7 @@ export function StaffHrScreen() {
         onUpload={() => importInputRef.current?.click()}
       />
 
-      {!selectedGroup ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{groupCards.map((item)=><button key={item.value} type="button" onClick={()=>setSelectedGroup(item.value)} className="min-h-36 rounded-[8px] border bg-surface p-4 text-left transition hover:border-[var(--school-primary)] hover:shadow-sm"><BriefcaseBusiness size={20} className="text-[var(--school-primary)]" /><p className="mt-3 font-semibold">{item.label}</p><p className="mt-1 text-xs text-muted">{item.description}</p><p className="mt-4 text-2xl font-bold">{item.count}</p></button>)}</div> : <>
-      <Button className="mb-4" type="button" variant="outline" onClick={() => setSelectedGroup("")}><ArrowLeft size={16}/>Back to staff cards</Button>
+      {!selectedGroup ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{groupCards.map((item)=><button key={item.value} type="button" onClick={()=>setSelectedGroup(item.value)} className="min-h-36 rounded-[8px] border bg-surface p-4 text-left transition hover:border-[var(--school-primary)] hover:shadow-sm"><BriefcaseBusiness size={20} className="text-[var(--school-primary)]" /><p className="mt-3 font-semibold">{item.label}</p><p className="mt-1 text-xs text-muted">{item.description}</p><p className="mt-4 text-2xl font-bold">{item.count}</p></button>)}<Link href="/admin/staff/assignments" className="min-h-36 rounded-[8px] border bg-surface p-4 text-left transition hover:border-[var(--school-primary)] hover:shadow-sm sm:col-span-2 xl:col-span-1"><UserRoundCog size={20} className="text-[var(--school-primary)]" /><p className="mt-3 font-semibold">Teacher assignments</p><p className="mt-1 text-xs text-muted">Class and subject access</p><p className="mt-4 text-2xl font-bold">{state.teacherAssignments.length}</p></Link></div> : <>
 
       {formOpen && (
         <Card className="mb-5 p-5">
@@ -292,31 +282,24 @@ export function StaffHrScreen() {
         <Select clearable label="Status" value={status} onChange={setStatus} placeholder="All statuses" options={["ACTIVE", "SUSPENDED", "INACTIVE"].map((value) => ({ value, label: value }))} />
       </div>
 
-      <section className="overflow-hidden rounded-xl border bg-surface">
+      <section className="bg-surface">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] text-left text-sm">
-            <thead className="bg-surface-muted text-xs uppercase text-muted"><tr>{["Staff", "Role", "Contact", "Classes", "Status", "Actions"].map((item) => <th className="px-4 py-3" key={item}>{item}</th>)}</tr></thead>
+          <table className="w-full min-w-[920px] text-left text-sm">
+            <thead className="bg-surface-muted text-xs uppercase text-muted"><tr>{["Staff", "Role", "Contact", "Classes", "Status"].map((item) => <th className="px-4 py-3" key={item}>{item}</th>)}</tr></thead>
             <tbody className="divide-y">
-              {rows.map((item) => (
+              {pagination.rows.map((item) => (
                 <ClickableTableRow key={item.id} href={`/admin/staff/${item.userId}`} label={item.fullName}>
-                  <td className="px-4 py-3"><div className="flex items-center gap-3"><Avatar initials={`${item.firstName[0] ?? ""}${item.lastName[0] ?? ""}`} src={item.photoUrl} alt={`${item.fullName} profile`} /><div><p className="font-semibold"><PersonNameLink kind="staff" id={item.userId}>{item.fullName}</PersonNameLink></p><p className="text-xs text-muted">{item.employeeNumber ?? item.id}</p></div></div></td>
-                  <td className="px-4 py-3"><p>{item.jobTitle}</p><p className="text-xs text-muted">{item.isTeachingStaff ? "Teaching staff" : item.department ?? "Non-teaching staff"}</p></td>
-                  <td className="px-4 py-3"><p>{item.email}</p><p className="text-xs text-muted">{item.phone ?? "No phone"}</p></td>
-                  <td className="px-4 py-3">{item.isTeachingStaff ? `${item.assignedClassIds.length} class(es), ${item.subjectIds.length} subject(s)` : "Not applicable"}</td>
-                  <td className="px-4 py-3"><Badge tone={item.status === "ACTIVE" ? "success" : "warning"}>{item.status}</Badge></td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-2">
-                      <Link className="font-semibold text-[var(--school-primary)]" href={`/admin/staff/${item.userId}`}>View details</Link>
-                      {item.isTeachingStaff ? <Link className="font-semibold text-[var(--school-primary)]" href={`/admin/staff/assignments?teacher=${item.userId}`}>Assign classes</Link> : <span className="text-muted">No class access</span>}
-                      <button className="font-semibold text-muted" onClick={() => void setStaffStatus(item.userId, item.status === "SUSPENDED" ? "ACTIVE" : "SUSPENDED").then(() => toast(item.status === "SUSPENDED" ? "Staff member reactivated." : "Staff member suspended.", "success")).catch((caught) => toast(caught instanceof Error ? caught.message : "Staff status could not be changed.", "error"))}>{item.status === "SUSPENDED" ? "Reactivate" : "Suspend"}</button>
-                      <button className="inline-flex items-center gap-1 font-semibold text-danger" onClick={() => deleteStaff(item)}><Trash2 size={14} />Delete</button>
-                    </div>
-                  </td>
+                  <td data-column-label="Staff" className="px-4 py-3"><div className="flex items-center gap-3"><Avatar initials={`${item.firstName[0] ?? ""}${item.lastName[0] ?? ""}`} src={item.photoUrl} alt={`${item.fullName} profile`} /><div className="min-w-0"><p className="font-semibold"><PersonNameLink kind="staff" id={item.userId}>{item.fullName}</PersonNameLink></p><p className="text-xs text-muted">{item.employeeNumber ?? item.id}</p></div></div></td>
+                  <td data-column-label="Role" className="px-4 py-3"><p>{item.jobTitle}</p><p className="text-xs text-muted">{item.isTeachingStaff ? "Teaching staff" : item.department ?? "Non-teaching staff"}</p></td>
+                  <td data-column-label="Contact" className="px-4 py-3"><p>{item.email}</p><p className="text-xs text-muted">{item.phone ?? "No phone"}</p></td>
+                  <td data-column-label="Classes" className="px-4 py-3">{item.isTeachingStaff ? `${item.assignedClassIds.length} classes` : "—"}</td>
+                  <td data-column-label="Status" className="px-4 py-3"><Badge tone={item.status === "ACTIVE" ? "success" : "warning"}>{item.status}</Badge></td>
                 </ClickableTableRow>
               ))}
             </tbody>
           </table>
         </div>
+        <TablePagination label="Staff" total={pagination.total} page={pagination.page} pageCount={pagination.pageCount} pageSize={pagination.pageSize} start={pagination.start} onPageChange={pagination.setPage} onPageSizeChange={pagination.setPageSize} />
         {!rows.length && <EmptyState title="No staff found" description="Add staff members or clear the filters." />}
       </section></>}
     </div>

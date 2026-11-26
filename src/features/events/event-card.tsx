@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatEventDate, formatEventTime } from "@/lib/date-utils";
 import type { SchoolEvent } from "./events.types";
 
-const fallbackColor = "#075985";
+const fallbackColor = "var(--school-secondary)";
 const hexColor = (value?: string) => /^#[0-9a-f]{6}$/i.test(value ?? "") ? value : fallbackColor;
 
 export function EventCard({ event, actions, compact = false }: { event: SchoolEvent; actions?: React.ReactNode; compact?: boolean }) {
@@ -26,9 +26,9 @@ export function EventCard({ event, actions, compact = false }: { event: SchoolEv
           {actions}
         </div>
         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-muted">
-          <span className="inline-flex items-center gap-1.5"><CalendarDays size={14} />{formatEventDate(event.startDate)}</span>
-          {event.startTime && <span className="inline-flex items-center gap-1.5"><Clock size={14} />{formatEventTime(event.startTime)}</span>}
-          {event.location && <span className="inline-flex items-center gap-1.5"><MapPin size={14} />{event.location}</span>}
+          <span className="inline-flex items-center gap-1.5"><CalendarDays size={14} className="text-[var(--school-secondary-ink)]" />{formatEventDate(event.startDate)}</span>
+          {event.startTime && <span className="inline-flex items-center gap-1.5"><Clock size={14} className="text-[var(--school-secondary-ink)]" />{formatEventTime(event.startTime)}</span>}
+          {event.location && <span className="inline-flex items-center gap-1.5"><MapPin size={14} className="text-[var(--school-accent-ink)]" />{event.location}</span>}
         </div>
         {!compact && <div className="mt-3 flex flex-wrap gap-1.5">{event.audience.map((audience) => <Badge key={audience}>{audience}</Badge>)}</div>}
       </div>

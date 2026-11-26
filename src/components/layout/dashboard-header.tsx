@@ -26,7 +26,7 @@ export function DashboardHeader({ user, navigation, onMenu, historicalReadOnly =
         <button onClick={onMenu} className="rounded-[10px] border p-2.5 text-muted lg:hidden" aria-label="Open navigation">
           <Menu size={19} />
         </button>
-        {showSchoolContext && <div className="hidden min-w-0 sm:block lg:hidden xl:block">
+        {showSchoolContext && <div className="hidden min-w-0 xl:block">
           <p className="truncate text-sm font-semibold">{settings.name}</p>
           <p className="text-[11px] text-muted">{periodLabel}</p>
         </div>}
@@ -35,7 +35,7 @@ export function DashboardHeader({ user, navigation, onMenu, historicalReadOnly =
       <div className="flex items-center gap-2">
         {historicalReadOnly && <div role="status" aria-label="Past session or term. Changes are disabled." title="Viewing a past session or term. Changes are disabled." className="flex shrink-0 items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-950 sm:gap-1.5 sm:px-2.5 sm:text-xs">
           <LockKeyhole size={12} aria-hidden="true" />
-          <span>Past · Read only</span>
+          <span className="hidden sm:inline">Past · Read only</span>
         </div>}
         <PortalRefreshButton />
         <ThemeSwitcher />

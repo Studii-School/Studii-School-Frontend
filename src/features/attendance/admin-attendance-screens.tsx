@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Download, RotateCcw, Save } from "lucide-react";
 import Link from "@/features/navigation-progress/navigation-progress-link";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -12,6 +12,7 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { pageTabClass } from "@/components/ui/tabs";
 import { useAcademics } from "@/features/academics/academics-context";
 import { PersonNameLink } from "@/features/people/person-name-link";
 import {
@@ -25,10 +26,10 @@ import { dateBelongsToPeriod } from "@/features/academic-period/period-scope-uti
 import { PinToDashboardButton } from "@/features/dashboard-customisation/pin-to-dashboard-button";
 import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
 import { matchesSearch } from "@/lib/search";
-import { toLocalDateKey } from "@/lib/date-utils";
+import { formatDate, formatDateTime, formatTime, toLocalDateKey } from "@/lib/date-utils";
 import { useAttendance } from "./attendance-context";
-import { attendanceUserLabel } from "./attendance-user-label";
-import { filterAttendanceByPeriod, summarizeRegister } from "./attendance.utils";
+import { attendanceActorLabel, attendanceUserLabel } from "./attendance-user-label";
+import { filterAttendanceByPeriod, isAutomaticAbsentDay, summarizeRegister } from "./attendance.utils";
 import type { AttendanceStatus } from "./attendance.types";
 
 const statusOptions = ["PRESENT", "ABSENT", "LATE", "EXCUSED"] as const;
@@ -59,12 +60,14 @@ export function AdminAttendanceOverview() {
     startDate: selectedTerm?.startDate || settings.resumptionDate,
     endDate: selectedTerm?.endDate || settings.closingDate,
     requireStartDate: Boolean(selectedTerm),
+    isCurrentPeriod: scope.isCurrentPeriod,
   };
   const periodRegisters = filterAttendanceByPeriod(registers, attendancePeriod);
   const studentCount = (item: typeof academics.classes[number], register?: typeof registers[number]) =>
-    register?.status === "SUBMITTED" || register?.status === "REOPENED"
-      ? register.entries.length
-      : Math.max(item.studentIds.length, academics.students.filter((student) => student.classId === item.id && student.status === "ACTIVE").length);
+    new Set([
+      ...academics.students.filter((student) => student.classId === item.id && student.status === "ACTIVE" && (!student.admissionDate || student.admissionDate.slice(0, 10) <= date)).map((student) => student.id),
+      ...(register?.entries.map((entry) => entry.studentId) ?? []),
+    ]).size;
   const classes = academics.classes.filter(
     (item) =>
       item.status === "ACTIVE" &&
@@ -86,7 +89,7 @@ export function AdminAttendanceOverview() {
   const totals = rows.reduce(
     (result, { item, register }) => {
       const count = studentCount(item, register);
-      const summary = summarizeRegister(register, count);
+      const summary = summarizeRegister(register?.status === "DRAFT" ? undefined : register, count, isAutomaticAbsentDay(date, attendancePeriod));
       return {
         enrolled: result.enrolled + count,
         present: result.present + summary.present,
@@ -136,7 +139,7 @@ export function AdminAttendanceOverview() {
           {allClasses.map((item) => {
             const register = periodRegisters.find((record) => record.classId === item.id && record.date === date);
             const count = studentCount(item, register);
-            const summary = summarizeRegister(register, count);
+            const summary = summarizeRegister(register?.status === "DRAFT" ? undefined : register, count, isAutomaticAbsentDay(date, attendancePeriod));
             const classTeacher = getTeacherByUserId(academics, item.classTeacherUserId ?? "");
             return (
               <button key={item.id} type="button" onClick={() => setClassId(item.id)} className="min-h-40 rounded-[8px] border bg-surface p-4 text-left transition hover:border-[var(--school-primary)] hover:shadow-sm">
@@ -151,7 +154,7 @@ export function AdminAttendanceOverview() {
                   <div><p className="text-xs text-muted">Students</p><p className="font-bold">{count}</p></div>
                   <div><p className="text-xs text-muted">Present</p><p className="font-bold">{summary.present}</p></div>
                   <div><p className="text-xs text-muted">Absent</p><p className="font-bold">{summary.absent}</p></div>
-                  <div><p className="text-xs text-muted">Unmarked</p><p className="font-bold">{summary.unmarked}</p></div>
+                  <div><p className="text-xs text-muted">Auto absent</p><p className="font-bold">{isAutomaticAbsentDay(date, attendancePeriod) ? Math.max(0, count - (register?.status === "DRAFT" ? 0 : register?.entries.length ?? 0)) : 0}</p></div>
                 </div>
               </button>
             );
@@ -167,6 +170,8 @@ export function AdminAttendanceOverview() {
       <PageHeader
         title="Attendance"
         description="School-wide class registers, exceptions and correction access."
+        showBack
+        onBack={() => setClassId("")}
         action={
           <div className="flex gap-2">
             <PinToDashboardButton role="admin" widgetId="admin-attendance" />
@@ -178,9 +183,6 @@ export function AdminAttendanceOverview() {
         }
       />
       {error && <p role="alert" className="mb-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</p>}
-      <Button className="mb-4" type="button" variant="outline" onClick={() => setClassId("")}>
-        Back to class cards
-      </Button>
       <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <Input
           aria-label="Attendance date"
@@ -270,7 +272,7 @@ export function AdminAttendanceOverview() {
       >
         <div className="divide-y px-5">
           {rows.map(({ item, register }) => {
-            const summary = summarizeRegister(register, studentCount(item, register));
+            const summary = summarizeRegister(register?.status === "DRAFT" ? undefined : register, studentCount(item, register), isAutomaticAbsentDay(date, attendancePeriod));
             const classTeacher = getTeacherByUserId(
               academics,
               item.classTeacherUserId ?? "",
@@ -337,6 +339,7 @@ export function AdminClassAttendanceScreen({ classId }: { classId: string }) {
     startDate: selectedTerm?.startDate || settings.resumptionDate,
     endDate: selectedTerm?.endDate || settings.closingDate,
     requireStartDate: Boolean(selectedTerm),
+    isCurrentPeriod: scope.isCurrentPeriod,
   };
   const available = filterAttendanceByPeriod(registers, attendancePeriod)
     .filter((register) => register.classId === classId)
@@ -377,7 +380,7 @@ export function AdminClassAttendanceScreen({ classId }: { classId: string }) {
               className="flex items-center justify-between py-4"
             >
               <span>
-                <b>{register.date}</b>
+                <b>{formatDate(register.date)}</b>
                 <p className="text-xs text-muted">
                   Submitted by {attendanceUserLabel(register.submittedByUserId ?? register.teacherUserId, state)}
                 </p>
@@ -419,16 +422,16 @@ export function AdminAttendanceRegisterScreen({
   const register = periodRegisters.find(
     (item) => item.classId === classId && item.date === date,
   );
-  const dateInSelectedPeriod = Boolean(register) || (scope.isCurrentPeriod && date === today()) || dateBelongsToPeriod(date, attendancePeriod);
+  const dateInSelectedPeriod = Boolean(register) || isAutomaticAbsentDay(date, attendancePeriod) || dateBelongsToPeriod(date, attendancePeriod);
   const schoolClass = getClassById(academics, classId);
   const classTeacher = getTeacherByUserId(
     academics,
     schoolClass?.classTeacherUserId ?? "",
   );
-  const students = useMemo(() => {
-    const current = academics.students.filter((student) => student.classId === classId);
-    if (register?.status !== "SUBMITTED" && register?.status !== "REOPENED") return current;
-    return register.entries.map((entry) => {
+  const students = (() => {
+    const current = academics.students.filter((student) => student.classId === classId && student.status === "ACTIVE" && (!student.admissionDate || student.admissionDate.slice(0, 10) <= date));
+    if (!register?.entries.length) return current;
+    const recorded = register.entries.map((entry) => {
       const known = current.find((student) => student.id === entry.studentId)
         ?? academics.students.find((student) => student.id === entry.studentId);
       return known ?? {
@@ -438,19 +441,21 @@ export function AdminAttendanceRegisterScreen({
         admissionNumber: entry.student?.admissionNumber ?? "",
       };
     });
-  }, [academics.students, classId, register]);
-  const summary = summarizeRegister(register, students.length);
-  const visible = useMemo(
-    () =>
-      students
+    const currentIds = new Set(current.map((student) => student.id));
+    return [...current, ...recorded.filter((student) => !currentIds.has(student.id))];
+  })();
+  const automatic = isAutomaticAbsentDay(date, attendancePeriod);
+  const submittedRegister = register?.status === "DRAFT" ? undefined : register;
+  const summary = summarizeRegister(submittedRegister, students.length, automatic);
+  const visible = students
         .map((student) => ({
           student,
-          entry: register?.entries.find((item) => item.studentId === student.id),
+          entry: submittedRegister?.entries.find((item) => item.studentId === student.id),
         }))
         .filter(
           ({ student, entry }) =>
             (tab === "ALL" ||
-              (tab === "UNMARKED" ? !entry : entry?.status === tab)) &&
+              (tab === "AUTO" ? automatic && !entry : tab === "ABSENT" ? entry?.status === "ABSENT" || (automatic && !entry) : entry?.status === tab)) &&
             matchesSearch(
               query,
               studentName(student),
@@ -458,9 +463,7 @@ export function AdminAttendanceRegisterScreen({
               entry?.status,
               entry?.note,
             ),
-        ),
-    [students, register, tab, query],
-  );
+        );
 
   if (!schoolClass) {
     return <EmptyState title="Class not found" description="This class is unavailable." />;
@@ -567,7 +570,7 @@ export function AdminAttendanceRegisterScreen({
             <br />
             <b>
               {register?.submittedAt
-                ? new Date(register.submittedAt).toLocaleString()
+                ? formatDateTime(register.submittedAt)
                 : "-"}
             </b>
           </p>
@@ -578,16 +581,14 @@ export function AdminAttendanceRegisterScreen({
           </p>
         </div>
       </Card>
-      <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
-        {["ALL", "PRESENT", "ABSENT", "LATE", "EXCUSED", "UNMARKED"].map(
+      <div className="portal-page-tabs mb-4 flex gap-1 overflow-x-auto border-b" aria-label="Attendance status filters">
+        {["ALL", "PRESENT", "ABSENT", "LATE", "EXCUSED", "AUTO"].map(
           (value) => (
             <button
               key={value}
-              className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium ${
-                tab === value
-                  ? "bg-[var(--school-primary)] text-white"
-                  : "bg-surface-muted"
-              }`}
+              type="button"
+              aria-pressed={tab === value}
+              className={`${pageTabClass(tab === value)} whitespace-nowrap`}
               onClick={() => setTab(value)}
             >
               {label(value)}
@@ -629,14 +630,16 @@ export function AdminAttendanceRegisterScreen({
             <tbody className="divide-y">
               {visible.map(({ student, entry }) => (
                 <AdminAttendanceRow
-                  key={student.id}
+                  key={`${student.id}-${entry?.id ?? "auto"}-${entry?.status ?? "absent"}`}
                   student={student}
                   entry={entry}
-                  markedBy={attendanceUserLabel(
+                  markedBy={entry ? attendanceActorLabel(
                     entry?.markedByUserId,
                     academics,
-                    register?.auditHistory.find((audit) => audit.actorUserId === entry?.markedByUserId)?.actorUser,
-                  )}
+                    entry?.markedByUser ?? register?.auditHistory.find((audit) => audit.actorUserId === entry?.markedByUserId)?.actorUser,
+                    register?.auditHistory.find((audit) => audit.actorUserId === entry?.markedByUserId)?.actorRole,
+                  ) : automatic ? "Auto" : "-"}
+                  automatic={automatic}
                   editable={register?.status === "REOPENED"}
                   onSave={correct}
                 />
@@ -653,7 +656,7 @@ export function AdminAttendanceRegisterScreen({
                 <b>{label(entry.action)}</b>
                 <p className="text-muted">
                   {entry.actorRole} - {attendanceUserLabel(entry.actorUserId, academics, entry.actorUser)} -{" "}
-                  {new Date(entry.createdAt).toLocaleString()}
+                  {formatDateTime(entry.createdAt)}
                 </p>
                 {entry.reason && <p className="mt-1">Reason: {entry.reason}</p>}
               </div>
@@ -669,6 +672,7 @@ function AdminAttendanceRow({
   student,
   entry,
   markedBy,
+  automatic,
   editable,
   onSave,
 }: {
@@ -677,11 +681,12 @@ function AdminAttendanceRow({
     | ReturnType<typeof useAttendance>["registers"][number]["entries"][number]
     | undefined;
   markedBy: string;
+  automatic: boolean;
   editable: boolean;
   onSave: (studentId: string, status: AttendanceStatus) => void;
 }) {
   const [status, setStatus] = useState<AttendanceStatus>(
-    entry?.status ?? "PRESENT",
+    entry?.status ?? (automatic ? "ABSENT" : "PRESENT"),
   );
   const name = studentName(student);
 
@@ -712,18 +717,16 @@ function AdminAttendanceRow({
           >
             {label(entry.status)}
           </Badge>
-        ) : (
-          "Unmarked"
-        )}
+        ) : automatic ? <Badge tone="danger">Absent · Auto</Badge> : "Unmarked"}
       </td>
-      <td className="px-4 py-3">{entry?.arrivalTime ?? "-"}</td>
+      <td className="px-4 py-3">{entry?.arrivalTime ? formatTime(entry.arrivalTime) : "-"}</td>
       <td className="px-4 py-3">{entry?.note ?? "-"}</td>
       <td className="px-4 py-3">{markedBy}</td>
       <td className="px-4 py-3">
-        {entry?.updatedAt ? new Date(entry.updatedAt).toLocaleString() : "-"}
+        {entry?.updatedAt ? formatDateTime(entry.updatedAt) : "-"}
       </td>
       <td className="px-4 py-3">
-        {editable && entry ? (
+        {editable && (entry || automatic) ? (
           <Button variant="outline" onClick={() => onSave(student.id, status)}>
             <Save size={14} />
             Correct

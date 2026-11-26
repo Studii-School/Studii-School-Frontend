@@ -1,9 +1,20 @@
 "use client";
 
+import { useState } from "react";
 import Image from "next/image";
 import { ImagePlus, Link, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+
+function isPublicImageUrl(value?: string): value is string {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
 
 export function SchoolLogoUpload({
   label,
@@ -16,25 +27,23 @@ export function SchoolLogoUpload({
   onChange: (value?: string) => void;
   onError: (message: string) => void;
 }) {
+  const [failedUrl, setFailedUrl] = useState<string>();
   const updateUrl = (next: string) => {
     const trimmed = next.trim();
+    setFailedUrl(undefined);
     if (!trimmed) {
       onChange(undefined);
+      onError("");
       return;
     }
-    try {
-      new URL(trimmed);
-      onChange(trimmed);
-    } catch {
-      onError(`${label} must be a valid image URL.`);
-      onChange(trimmed);
-    }
+    onChange(trimmed);
+    onError(isPublicImageUrl(trimmed) ? "" : `${label} must be a public HTTP or HTTPS image URL.`);
   };
 
   return (
     <div className="min-w-0 max-w-full rounded-xl border p-4">
       <div className="flex min-w-0 items-center gap-3">
-        {value ? (
+        {isPublicImageUrl(value) && failedUrl !== value ? (
           <Image
             unoptimized
             width={56}
@@ -42,6 +51,10 @@ export function SchoolLogoUpload({
             src={value}
             alt={`${label} preview`}
             className="size-14 shrink-0 rounded-[10px] border object-contain p-1"
+            onError={() => {
+              setFailedUrl(value);
+              onError(`${label} could not be loaded. Check the image URL.`);
+            }}
           />
         ) : (
           <span className="flex size-14 shrink-0 items-center justify-center rounded-[10px] bg-surface-muted text-muted">
@@ -50,7 +63,7 @@ export function SchoolLogoUpload({
         )}
         <div className="min-w-0">
           <p className="break-words text-sm font-semibold">{label}</p>
-          <p className="mt-1 break-words text-xs text-muted">PNG, JPG or WEBP URL</p>
+          <p className="mt-1 break-words text-xs text-muted">{label.includes("favicon") ? "ICO, PNG, JPG or WEBP URL" : "PNG, JPG or WEBP URL"}</p>
         </div>
       </div>
       <div className="mt-3 flex min-w-0 flex-col gap-2">
@@ -65,11 +78,12 @@ export function SchoolLogoUpload({
             placeholder="https://example.com/image.png"
           />
         </label>
+        {value && failedUrl === value && <p className="text-xs text-danger">This image could not be loaded. Use a public image URL.</p>}
         {value && (
           <Button
             type="button"
             variant="ghost"
-            onClick={() => onChange(undefined)}
+            onClick={() => { setFailedUrl(undefined); onChange(undefined); onError(""); }}
           >
             <Trash2 size={16} />
             Remove

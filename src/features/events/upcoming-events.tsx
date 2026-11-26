@@ -2,6 +2,7 @@
 
 import Link from "@/features/navigation-progress/navigation-progress-link";
 import { ArrowRight, CalendarX2 } from "lucide-react";
+import { BrandIcon } from "@/components/ui/brand-icon";
 import { isUpcomingDate } from "@/lib/date-utils";
 import { readStoredToken } from "@/lib/api";
 import { readStoredUser } from "@/lib/auth";
@@ -52,6 +53,6 @@ export function UpcomingEvents({ role, compact = false, selectedClass, parentTar
 
   if (isLoading) return <div className="space-y-3 p-4">{[1, 2, 3].map((item) => <div key={item} className="h-24 animate-pulse rounded-xl bg-surface-muted" />)}</div>;
   if (error) return <p role="alert" className="p-5 text-sm text-danger">{error}</p>;
-  if (!shown.length) return <div className="flex flex-col items-center p-8 text-center"><CalendarX2 className="text-muted" size={24} /><p className="mt-3 text-sm font-semibold">No upcoming events</p><p className="mt-1 text-xs text-muted">Published events for this audience will appear here.</p></div>;
+  if (!shown.length) return <div className="flex flex-col items-center p-8 text-center"><BrandIcon tone="accent" className="size-11 rounded-xl"><CalendarX2 size={22} /></BrandIcon><p className="mt-3 text-sm font-semibold">No upcoming events</p><p className="mt-1 text-xs text-muted">Published events for this audience will appear here.</p></div>;
   return <div><div className="space-y-3 p-4">{shown.map((event) => <EventCard key={event.id} event={event} compact={compact} />)}</div>{compact && <div className="border-t p-4"><Link href={href} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--school-primary)]">View all events <ArrowRight size={15} /></Link></div>}</div>;
 }

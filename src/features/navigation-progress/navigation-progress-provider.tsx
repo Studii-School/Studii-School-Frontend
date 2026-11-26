@@ -5,7 +5,6 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { NavigationProgressBar } from "./navigation-progress-bar";
 import { NavigationProgressContext } from "./navigation-progress-context";
 import { useNavigationProgress } from "./use-navigation-progress";
-import { recordAppHistory } from "./app-history";
 
 const INITIAL_PROGRESS = 10;
 const MAX_WAITING_PROGRESS = 90;
@@ -18,7 +17,6 @@ function NavigationCompletionListener() {
   const { complete } = useNavigationProgress();
 
   useEffect(() => {
-    recordAppHistory(search ? `${pathname}?${search}` : pathname);
     complete();
   }, [pathname, search, complete]);
 

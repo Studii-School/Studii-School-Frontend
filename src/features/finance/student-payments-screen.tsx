@@ -9,6 +9,7 @@ import { Modal } from "@/components/ui/modal";
 import { useAcademics } from "@/features/academics/academics-context";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { formatNaira } from "@/lib/currency";
+import { formatDate } from "@/lib/date-utils";
 import { readStoredUser } from "@/lib/auth";
 import { resolveStudentSession } from "@/features/academics/student-session";
 import { useFinance } from "./finance-context";
@@ -65,7 +66,7 @@ export function StudentPaymentsScreen() {
         {dueInvoices.map((invoice) => {
           const feeName = allState.feeStructures.find((fee) => fee.id === invoice.feeStructureId)?.name ?? invoice.invoiceNumber;
           return <Card key={invoice.id} className="flex flex-col gap-4 rounded-2xl p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
-            <div><p className="font-semibold">{feeName}</p><p className="mt-1 text-sm text-muted">{invoice.term} {invoice.academicSession} · Due {invoice.dueDate}</p><p className="mt-2 text-lg font-bold">{formatNaira(invoice.outstandingBalance)} <span className="text-xs font-normal text-muted">remaining</span></p></div>
+            <div><p className="font-semibold">{feeName}</p><p className="mt-1 text-sm text-muted">{invoice.term} {invoice.academicSession} · Due {formatDate(invoice.dueDate)}</p><p className="mt-2 text-lg font-bold">{formatNaira(invoice.outstandingBalance)} <span className="text-xs font-normal text-muted">remaining</span></p></div>
             <Button className="w-full sm:w-auto" disabled={Boolean(payingId)} onClick={() => void pay(invoice.id, invoice.outstandingBalance)}><CreditCard size={16} />{payingId === invoice.id ? "Opening Flutterwave…" : "Pay with Flutterwave"}</Button>
           </Card>;
         })}
@@ -74,7 +75,7 @@ export function StudentPaymentsScreen() {
 
     {receipts.length > 0 && <section aria-labelledby="student-payments-title">
       <div className="mb-3 flex items-center gap-2"><CheckCircle2 size={18} className="text-success" /><h2 id="student-payments-title" className="text-lg font-semibold">Recent receipts</h2></div>
-      <Card className="divide-y rounded-2xl px-4 sm:px-5">{receipts.map((receipt) => <div key={receipt.id} className="flex items-center justify-between gap-4 py-3"><div><p className="text-sm font-medium">{receipt.receiptNumber}</p><p className="text-xs text-muted">{receipt.paymentDate} · {formatNaira(receipt.amount)}</p></div><Button variant="outline" onClick={() => setReceiptId(receipt.id)}><FileText size={15} />View</Button></div>)}</Card>
+      <Card className="divide-y rounded-2xl px-4 sm:px-5">{receipts.map((receipt) => <div key={receipt.id} className="flex items-center justify-between gap-4 py-3"><div><p className="text-sm font-medium">{receipt.receiptNumber}</p><p className="text-xs text-muted">{formatDate(receipt.paymentDate)} · {formatNaira(receipt.amount)}</p></div><Button variant="outline" onClick={() => setReceiptId(receipt.id)}><FileText size={15} />View</Button></div>)}</Card>
     </section>}
     <Modal open={Boolean(receiptId)} onClose={() => setReceiptId("")} title="Payment receipt" maxWidth="2xl">
       {receipts.find((receipt) => receipt.id === receiptId) && <ReceiptPreview receipt={receipts.find((receipt) => receipt.id === receiptId)!} />}

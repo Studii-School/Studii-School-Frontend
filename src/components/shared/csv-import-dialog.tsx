@@ -34,6 +34,8 @@ export function CsvImportDialog({
   useEffect(() => {
     if (!open) return;
     previousFocus.current = document.activeElement as HTMLElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     closeRef.current?.focus();
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -57,6 +59,7 @@ export function CsvImportDialog({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => {
+      document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
       previousFocus.current?.focus();
     };
@@ -66,7 +69,7 @@ export function CsvImportDialog({
 
   return (
     <div
-      className={`fixed inset-0 z-[100] flex bg-black/45 ${variant === "drawer" ? "justify-end" : "items-center justify-center p-4"}`}
+      className={`fixed inset-0 z-[100] flex bg-black/45 ${variant === "drawer" ? "justify-end" : "items-center justify-center p-2 sm:p-4"}`}
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -78,7 +81,7 @@ export function CsvImportDialog({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
-        className={`w-full border bg-surface p-5 shadow-2xl sm:p-6 ${variant === "drawer" ? "h-full max-w-2xl overflow-y-auto animate-[drawer-in_180ms_ease-out]" : "max-w-lg rounded-2xl"}`}
+        className={`w-full border bg-surface p-5 shadow-2xl sm:p-6 ${variant === "drawer" ? "h-screen h-dvh max-w-2xl overflow-y-auto animate-[drawer-in_180ms_ease-out]" : "max-h-[calc(100dvh-1rem)] max-w-lg overflow-y-auto rounded-2xl"}`}
       >
         <div className="flex items-start justify-between gap-4">
           <div>

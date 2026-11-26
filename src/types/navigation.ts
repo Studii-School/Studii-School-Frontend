@@ -2,4 +2,4 @@ export type IconName = "dashboard" | "students" | "admissions" | "staff" | "acad
 
 export type FeatureKey = "students" | "admissions" | "staff" | "academics" | "attendance" | "finance" | "communications" | "events" | "results" | "timetable" | "assignments" | "library" | "transport" | "health" | "inventory";
 
-export interface NavigationItem { label: string; href: string; icon: IconName; feature?: FeatureKey; }
+export interface NavigationItem { label: string; href: string; icon: IconName; feature?: FeatureKey; hideFromMenu?: boolean; }

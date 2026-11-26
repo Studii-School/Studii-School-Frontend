@@ -3,6 +3,7 @@ import type {
   AttendanceRegister,
   AttendanceStatus,
   AttendanceSummary,
+  StudentAttendanceEntry,
 } from "./attendance.types";
 import { toLocalDateKey } from "../../lib/date-utils.ts";
 
@@ -15,41 +16,54 @@ export type AttendancePeriod = {
   endDate?: string;
   today?: string;
   requireStartDate?: boolean;
+  isCurrentPeriod?: boolean;
+  studentStartDate?: string;
 };
 
 function isDateKey(value?: string) {
   return Boolean(value && /^\d{4}-\d{2}-\d{2}(?:$|T)/.test(value));
 }
 
-function schoolDaysInclusive(startDate: string, endDate: string) {
+function schoolDayDates(startDate: string, endDate: string) {
   const start = new Date(`${startDate}T00:00:00Z`);
   const end = new Date(`${endDate}T00:00:00Z`);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return 0;
-  let days = 0;
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return [];
+  const days: string[] = [];
   for (let date = start; date <= end; date = new Date(date.getTime() + 86_400_000)) {
-    if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6) days += 1;
+    if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6) days.push(date.toISOString().slice(0, 10));
   }
   return days;
 }
 
-export function elapsedSchoolDays(period?: AttendancePeriod) {
+export function elapsedSchoolDates(period?: AttendancePeriod) {
   if (period?.requireStartDate && !isDateKey(period.startDate)) return undefined;
   if (!period || !isDateKey(period.startDate)) return undefined;
-  const startDate = period.startDate!.slice(0, 10);
+  const configuredStart = period.startDate!.slice(0, 10);
+  const admissionDate = isDateKey(period.studentStartDate) ? period.studentStartDate!.slice(0, 10) : undefined;
+  const startDate = admissionDate && admissionDate > configuredStart ? admissionDate : configuredStart;
   const today = isDateKey(period.today) ? period.today!.slice(0, 10) : toLocalDateKey(new Date());
   const periodEnd = isDateKey(period.endDate) ? period.endDate!.slice(0, 10) : undefined;
-  const end = periodEnd && periodEnd < today ? periodEnd : today;
-  return schoolDaysInclusive(startDate, end);
+  const end = !period.isCurrentPeriod && periodEnd && periodEnd < today ? periodEnd : today;
+  return schoolDayDates(startDate, end);
+}
+
+export function elapsedSchoolDays(period?: AttendancePeriod) {
+  return elapsedSchoolDates(period)?.length;
+}
+
+export function isAutomaticAbsentDay(date: string, period?: AttendancePeriod) {
+  return elapsedSchoolDates(period)?.includes(date) ?? false;
 }
 
 export function summarizeRegister(
   register?: AttendanceRegister,
   totalOverride?: number,
+  autoAbsent = false,
 ): AttendanceSummary {
   const total = totalOverride ?? register?.entries.length ?? 0;
   const present =
     register?.entries.filter((item) => item.status === "PRESENT").length ?? 0;
-  const absent =
+  const markedAbsent =
     register?.entries.filter((item) => item.status === "ABSENT").length ?? 0;
   const late =
     register?.entries.filter((item) => item.status === "LATE").length ?? 0;
@@ -57,14 +71,15 @@ export function summarizeRegister(
     register?.entries.filter((item) => item.status === "EXCUSED").length ?? 0;
   const unmarked = Math.max(
     0,
-    total - present - absent - late - excused,
+    total - present - markedAbsent - late - excused,
   );
+  const absent = markedAbsent + (autoAbsent ? unmarked : 0);
   return {
     present,
     absent,
     late,
     excused,
-    unmarked,
+    unmarked: autoAbsent ? 0 : unmarked,
     total,
     percentage: total
       ? Math.round(((present + late) / total) * 100)
@@ -77,15 +92,41 @@ export function attendanceHistoryForStudent(
   studentId: string,
   period?: AttendancePeriod,
 ) {
-  return (period?.termId ? filterAttendanceByPeriod(registers, period) : filterAttendanceBySession(registers, period))
+  if (!studentId) return [] as AttendanceHistoryItem[];
+  const manual = (period?.termId ? filterAttendanceByPeriod(registers, period) : filterAttendanceBySession(registers, period))
     .filter((item) => item.status === "SUBMITTED" || item.status === "REOPENED")
     .flatMap((item) =>
       item.entries
         .filter((entry) => entry.studentId === studentId)
-        .map((entry) => ({ ...entry, date: item.date })),
+        .map((entry): AttendanceHistoryItem => ({ ...entry, date: item.date, classId: item.classId, source: "MANUAL" })),
     )
     .sort((a, b) => b.date.localeCompare(a.date) || b.updatedAt.localeCompare(a.updatedAt));
+  const byDate = new Map<string, AttendanceHistoryItem>();
+  for (const item of manual) if (!byDate.has(item.date)) byDate.set(item.date, item);
+  for (const date of elapsedSchoolDates(period) ?? []) {
+    if (byDate.has(date)) continue;
+    byDate.set(date, {
+      id: `auto-absent-${studentId}-${date}`,
+      schoolId: period?.schoolId ?? "",
+      registerId: "",
+      classId: "",
+      studentId,
+      status: "ABSENT",
+      markedByUserId: "",
+      source: "AUTO",
+      date,
+      createdAt: `${date}T00:00:00.000Z`,
+      updatedAt: `${date}T00:00:00.000Z`,
+    });
+  }
+  return [...byDate.values()].sort((a, b) => b.date.localeCompare(a.date));
 }
+
+export type AttendanceHistoryItem = StudentAttendanceEntry & {
+  date: string;
+  classId: string;
+  source: "AUTO" | "MANUAL";
+};
 
 export function getAttendanceSummaryForStudent(
   registers: AttendanceRegister[],
@@ -104,16 +145,14 @@ export function getAttendanceSummaryForStudent(
   const absent = count("ABSENT");
   const late = count("LATE");
   const excused = count("EXCUSED");
-  // A school day counts as soon as it starts, even before its register is submitted.
-  // Keep the marked counts separate so an unmarked day is not labelled absent.
-  const elapsed = elapsedSchoolDays(period);
-  const total = Math.max(elapsed ?? items.length, items.length);
+  const total = items.length;
   return {
     present,
     absent,
     late,
     excused,
-    unmarked: Math.max(0, total - items.length),
+    unmarked: 0,
+    autoAbsent: items.filter((item) => item.source === "AUTO").length,
     total,
     percentage: total
       ? Math.round(((present + late) / total) * 100)
@@ -151,13 +190,10 @@ export function filterAttendanceBySession(
 ) {
   const sessionId = period?.academicSessionId ?? period?.sessionId;
   if (!sessionId) return [];
-  const start = isDateKey(period?.startDate) ? period!.startDate!.slice(0, 10) : undefined;
-  const end = isDateKey(period?.endDate) ? period!.endDate!.slice(0, 10) : undefined;
+  // The saved session ID owns the register even when configured session dates are stale.
   return registers.filter((register) =>
     (register.academicSessionId ?? register.sessionId) === sessionId &&
-    (!period?.schoolId || register.schoolId === period.schoolId) &&
-    (!start || register.date >= start) &&
-    (!end || register.date <= end),
+    (!period?.schoolId || register.schoolId === period.schoolId),
   );
 }
 

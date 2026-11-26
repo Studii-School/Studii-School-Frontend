@@ -14,6 +14,7 @@ import { parentChildrenFromAcademics, studentLabel } from "@/features/parents/pa
 import { useAcademics } from "@/features/academics/academics-context";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { formatNaira } from "@/lib/currency";
+import { formatDate } from "@/lib/date-utils";
 import { readStoredUser } from "@/lib/auth";
 import { useFinance } from "./finance-context";
 import { ReceiptPreview } from "./components/receipt-preview";
@@ -80,7 +81,7 @@ export function ParentPaymentsScreen() {
         {dueInvoices.map((invoice) => {
           const feeName = allState.feeStructures.find((fee) => fee.id === invoice.feeStructureId)?.name ?? invoice.invoiceNumber;
           return <Card key={invoice.id} className="flex flex-col gap-4 rounded-2xl p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
-            <div><p className="font-semibold"><PersonNameLink kind="student" id={invoice.studentId}>{invoice.student}</PersonNameLink> <span className="font-normal text-muted">· {feeName}</span></p><p className="mt-1 text-sm text-muted">{invoice.className} · {invoice.term} {invoice.academicSession} · Due {invoice.dueDate}</p><p className="mt-2 text-lg font-bold">{formatNaira(invoice.outstandingBalance)} <span className="text-xs font-normal text-muted">remaining</span></p></div>
+            <div><p className="font-semibold"><PersonNameLink kind="student" id={invoice.studentId}>{invoice.student}</PersonNameLink> <span className="font-normal text-muted">· {feeName}</span></p><p className="mt-1 text-sm text-muted">{invoice.className} · {invoice.term} {invoice.academicSession} · Due {formatDate(invoice.dueDate)}</p><p className="mt-2 text-lg font-bold">{formatNaira(invoice.outstandingBalance)} <span className="text-xs font-normal text-muted">remaining</span></p></div>
             <div className="flex flex-col gap-2 sm:min-w-48">
               <Button className="w-full" disabled={Boolean(payingId)} onClick={() => void pay(invoice.id, invoice.outstandingBalance)}><CreditCard size={16} />{payingId === invoice.id ? "Opening Flutterwave…" : "Pay with Flutterwave"}</Button>
               <button type="button" className="text-xs font-medium text-[var(--school-primary)] hover:underline" onClick={() => { setCustomInvoiceId(customInvoiceId === invoice.id ? "" : invoice.id); setCustomAmount(""); }}>Pay another amount</button>
@@ -96,7 +97,7 @@ export function ParentPaymentsScreen() {
 
     {receipts.length > 0 && <section aria-labelledby="family-payments-title">
       <div className="mb-3 flex items-center gap-2"><CheckCircle2 size={18} className="text-success" /><h2 id="family-payments-title" className="text-lg font-semibold">Recent receipts</h2></div>
-      <Card className="divide-y rounded-2xl px-4 sm:px-5">{receipts.map((receipt) => <div key={receipt.id} className="flex items-center justify-between gap-4 py-3"><div><p className="text-sm font-medium">{receipt.student} · {receipt.receiptNumber}</p><p className="text-xs text-muted">{receipt.paymentDate} · {formatNaira(receipt.amount)}</p></div><Button variant="outline" onClick={() => setReceiptId(receipt.id)}><FileText size={15} />View</Button></div>)}</Card>
+      <Card className="divide-y rounded-2xl px-4 sm:px-5">{receipts.map((receipt) => <div key={receipt.id} className="flex items-center justify-between gap-4 py-3"><div><p className="text-sm font-medium">{receipt.student} · {receipt.receiptNumber}</p><p className="text-xs text-muted">{formatDate(receipt.paymentDate)} · {formatNaira(receipt.amount)}</p></div><Button variant="outline" onClick={() => setReceiptId(receipt.id)}><FileText size={15} />View</Button></div>)}</Card>
       <Link href="/parent/payments/history" className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-[var(--school-primary)]"><FileText size={15} />View payment history</Link>
     </section>}
     <Modal open={Boolean(receiptId)} onClose={() => setReceiptId("")} title="Payment receipt" maxWidth="2xl">

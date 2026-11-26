@@ -39,11 +39,11 @@ export function GlobalSearch({ role, navigation }: { role: User["role"]; navigat
   }, [query, navigation, role, state]);
 
   return (
-    <div className="relative hidden md:block xl:ml-5">
-      <button onClick={() => { setOpen(true); setTimeout(() => input.current?.focus()); }} className="flex items-center gap-2 rounded-[10px] bg-surface-muted px-3 py-2 text-sm text-muted" aria-label="Search SchoolOS">
-        <Search size={16} />Search <kbd className="ml-8 text-xs">Ctrl K</kbd>
+    <div className="relative block min-w-0 xl:ml-5">
+      <button onClick={() => { setOpen(true); setTimeout(() => input.current?.focus()); }} className="flex size-10 items-center justify-center gap-2 rounded-[10px] bg-surface-muted text-sm text-muted md:w-auto md:justify-start md:px-3 md:py-2" aria-label="Search SchoolOS">
+        <Search size={16} /><span className="hidden md:inline">Search</span><kbd className="ml-8 hidden text-xs md:inline">Ctrl K</kbd>
       </button>
-      {open && <div className="absolute left-0 top-12 z-50 w-[min(28rem,calc(100vw-2rem))] rounded-xl border bg-surface p-2 shadow-xl">
+      {open && <div className="fixed inset-x-4 top-[4.5rem] z-50 rounded-xl border bg-surface p-2 shadow-xl md:absolute md:inset-x-auto md:left-0 md:top-12 md:w-[min(28rem,calc(100vw-2rem))]">
         <div className="flex items-center gap-2 px-2">
           <Search size={16} />
           <input ref={input} aria-label="Search pages and records" className="h-11 min-w-0 flex-1 bg-transparent text-sm outline-none" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Pages, classes or records" />

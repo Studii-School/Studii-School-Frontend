@@ -1,18 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import { Ban, Copy, FileText, Plus, Power, Trash2 } from "lucide-react";
-import { useSearchParams } from "next/navigation";
-import Link from "@/features/navigation-progress/navigation-progress-link";
+import { Plus } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { SectionCard } from "@/components/dashboard/section-card";
 import { Modal } from "@/components/ui/modal";
-import { Button, buttonStyles } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ClickableTableRow } from "@/components/ui/clickable-table-row";
+import { RowActionSelect } from "@/components/ui/row-action-select";
+import { TablePagination, usePaginatedRows } from "@/components/ui/table-pagination";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { useAcademics } from "@/features/academics/academics-context";
 import { formatNaira } from "@/lib/currency";
+import { formatDate } from "@/lib/date-utils";
 import { useFinance } from "./finance-context";
 import { useFinanceView } from "./use-finance-view";
 import { FinanceNavigation } from "./components/finance-navigation";
@@ -22,6 +24,7 @@ import { useFinancePeriodScope } from "./use-finance-period-scope";
 import type { FeeStructure } from "./finance.types";
 
 export function FeeStructuresScreen() {
+  const router = useRouter();
   const { allState: state, activateFeeStructure, updateFeeStructure, deleteFeeStructure } = useFinance();
   const { state: academics } = useAcademics();
   const periodScope = useFinancePeriodScope();
@@ -36,6 +39,7 @@ export function FeeStructuresScreen() {
   const fees = selectedClassId
     ? periodFees.filter((fee) => fee.applicableToAllStudents || fee.classGroup === "All classes" || fee.classIds?.includes(selectedClassId) || fee.classGroup === selectedClass?.displayName)
     : periodFees;
+  const pagination = usePaginatedRows(fees, `${selectedClassId}|${label}|${selectedTermOnly}`);
 
   const activate = (id: string, count: number) =>
     confirm({
@@ -106,10 +110,10 @@ export function FeeStructuresScreen() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1100px] text-left text-sm">
             <thead className="bg-surface-muted text-xs uppercase text-muted">
-              <tr>{["Fee name", "Class", "Category", "Amount", "Due date", "Assigned", "Expected revenue", "Status", "Actions"].map((item) => <th key={item} className={item === "Actions" ? "w-[280px] px-4 py-3" : "px-4 py-3"}>{item}</th>)}</tr>
+              <tr>{["Fee name", "Class", "Category", "Amount", "Due date", "Assigned", "Expected revenue", "Status", "Actions"].map((item) => <th key={item} className="px-4 py-3">{item}</th>)}</tr>
             </thead>
             <tbody className="divide-y">
-              {fees.map((fee) => {
+              {pagination.rows.map((fee) => {
                 const inSelectedPeriod = filterFeeStructuresByPeriod([fee], periodScope).length > 0;
                 const invoiceCount = state.invoices.filter((invoice) => invoice.feeStructureId === fee.id && invoice.academicSession === fee.academicSession && invoice.term === fee.term).length;
                 return (
@@ -118,26 +122,23 @@ export function FeeStructuresScreen() {
                   <td className="px-4 py-3">{fee.classGroup}</td>
                   <td className="px-4 py-3">{fee.category}</td>
                   <td className="px-4 py-3">{formatNaira(fee.amount)}</td>
-                  <td className="px-4 py-3">{fee.dueDate}</td>
+                  <td className="px-4 py-3">{formatDate(fee.dueDate)}</td>
                   <td className="px-4 py-3">{fee.studentsAssigned}</td>
                   <td className="px-4 py-3">{formatNaira(fee.expectedRevenue)}</td>
                   <td className="px-4 py-3"><Badge tone={fee.status === "Active" ? "success" : fee.status === "Draft" ? "warning" : "neutral"}>{fee.status === "Archived" ? "Inactive" : fee.status}</Badge></td>
-                  <td className="px-4 py-3">
-                    <div className="flex w-max items-center gap-2 whitespace-nowrap">
-                      {fee.status === "Draft" && inSelectedPeriod && <Button className="min-h-9 px-3 text-xs" variant="outline" disabled={busy === fee.id} onClick={() => activate(fee.id, fee.classIds?.length ? state.invoices.length || 4 : 4)}><Power size={14} />{busy === fee.id ? "Activating..." : "Activate"}</Button>}
-                      {!inSelectedPeriod && <Button className="min-h-9 px-3 text-xs" variant="outline" onClick={() => { setTemplate(fee); setShowForm(true); }}><Copy size={14} />Copy to this term</Button>}
-                      {invoiceCount > 0
-                        ? <Link href={invoiceHref(fee.id)} className={buttonStyles("outline") + " min-h-9 px-3 text-xs"}><FileText size={14} />View invoices</Link>
-                        : <Button className="min-h-9 px-3 text-xs" variant="outline" onClick={() => toast(inSelectedPeriod ? "This fee has no student invoices in the selected term. Activate a draft to create them, or check that eligible students are enrolled." : "Select this fee's academic term in the top bar to view its invoices.", "info")}><FileText size={14} />View invoices</Button>}
-                      {fee.status === "Active" && <Button className="min-h-9 px-3 text-xs" variant="outline" disabled={busy === fee.id} onClick={() => deactivate(fee.id)}><Ban size={14} />Deactivate</Button>}
-                      {fee.status !== "Active" && <Button className="min-h-9 px-3 text-xs" variant="danger" disabled={busy === fee.id} onClick={() => remove(fee.id)}><Trash2 size={14} />Delete</Button>}
-                    </div>
-                  </td>
+                  <td className="px-4 py-3"><RowActionSelect label={`Actions for ${fee.name}`} actions={[
+                    ...(fee.status === "Draft" && inSelectedPeriod ? [{ label: "Activate", disabled: busy === fee.id, onSelect: () => activate(fee.id, fee.classIds?.length ? state.invoices.length || 4 : 4) }] : []),
+                    ...(!inSelectedPeriod ? [{ label: "Copy to this term", onSelect: () => { setTemplate(fee); setShowForm(true); } }] : []),
+                    { label: "View invoices", onSelect: () => invoiceCount > 0 ? router.push(invoiceHref(fee.id)) : toast(inSelectedPeriod ? "This fee has no student invoices in the selected term. Activate a draft to create them, or check that eligible students are enrolled." : "Select this fee's academic term in the top bar to view its invoices.", "info") },
+                    ...(fee.status === "Active" ? [{ label: "Deactivate", disabled: busy === fee.id, onSelect: () => deactivate(fee.id) }] : []),
+                    ...(fee.status !== "Active" ? [{ label: "Delete", disabled: busy === fee.id, onSelect: () => remove(fee.id) }] : []),
+                  ]} /></td>
                 </ClickableTableRow>
               );})}
             </tbody>
           </table>
         </div>
+        <TablePagination label="Fee structures" total={pagination.total} page={pagination.page} pageCount={pagination.pageCount} pageSize={pagination.pageSize} start={pagination.start} onPageChange={pagination.setPage} onPageSizeChange={pagination.setPageSize} />
       </SectionCard>
     </>
   );

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronDown, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "./input";
@@ -10,6 +11,35 @@ export interface SelectOption {
   label: string;
   description?: string;
   disabled?: boolean;
+}
+
+function useFloatingMenu(open: boolean) {
+  const root = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const element = menu.current;
+    if (!open || !element) return;
+    const place = () => {
+      const rect = root.current?.getBoundingClientRect();
+      if (!rect) return;
+      element.style.width = `${rect.width}px`;
+      const height = element.offsetHeight;
+      const below = window.innerHeight - rect.bottom;
+      element.style.top = `${below < height + 8 && rect.top > below ? Math.max(8, rect.top - height - 8) : rect.bottom + 8}px`;
+      element.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8))}px`;
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(element);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, root, menu]);
+  return { root, menu };
 }
 
 interface SelectProps {
@@ -44,7 +74,7 @@ export function Select({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const root = useRef<HTMLDivElement>(null);
+  const { root, menu } = useFloatingMenu(open);
   const listId = useId();
   const filtered = useMemo(
     () =>
@@ -59,11 +89,11 @@ export function Select({
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
+      if (!root.current?.contains(event.target as Node) && !menu.current?.contains(event.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
-  }, []);
+  }, [root, menu]);
 
   const choose = (option: SelectOption) => {
     if (option.disabled) return;
@@ -85,7 +115,8 @@ export function Select({
         aria-controls={listId}
         aria-haspopup="listbox"
         className={cn(
-          "flex h-11 w-full min-w-0 max-w-full items-center justify-between gap-2 rounded-[10px] border bg-surface px-3 text-left text-sm focus:border-[var(--school-primary)] disabled:opacity-50",
+          "flex h-11 w-full min-w-0 max-w-full items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-surface px-3.5 text-left text-sm shadow-sm transition-colors hover:border-[var(--school-primary)] hover:bg-surface-muted focus:border-[var(--school-primary)] disabled:opacity-50",
+          open && "border-[var(--school-primary)] bg-surface-muted",
           error && "border-danger",
           triggerClassName,
         )}
@@ -132,20 +163,19 @@ export function Select({
               <X size={15} />
             </span>
           )}
-          <ChevronDown
-            size={16}
-            className={cn("transition-transform", open && "rotate-180")}
-          />
+          <span className="flex size-6 items-center justify-center rounded-md bg-[var(--school-secondary-soft)] text-[var(--school-secondary-ink)]">
+            <ChevronDown size={15} className={cn("transition-transform", open && "rotate-180")} />
+          </span>
         </span>
       </button>
       {error && <p className="mt-1 text-xs text-danger">{error}</p>}
-      {open && (
-        <div className="absolute inset-x-0 z-[80] mt-1 max-h-[min(20rem,60vh)] min-w-0 max-w-full overflow-hidden rounded-xl border bg-surface shadow-xl">
+      {open && createPortal(
+        <div ref={menu} className="fixed z-[100] max-h-[min(20rem,60vh)] min-w-0 overflow-hidden rounded-xl border border-[var(--border)] bg-surface shadow-2xl">
           {searchable && (
             <label className="relative block border-b p-2">
               <span className="sr-only">Search {label}</span>
               <Search
-                className="absolute left-5 top-1/2 -translate-y-1/2 text-muted"
+                className="absolute left-5 top-1/2 -translate-y-1/2 text-[var(--school-secondary-ink)]"
                 size={15}
               />
               <Input
@@ -163,7 +193,7 @@ export function Select({
             id={listId}
             role="listbox"
             aria-label={label}
-            className="max-h-64 overflow-y-auto p-1"
+            className="max-h-64 overflow-y-auto p-1.5"
           >
             {filtered.length ? (
               filtered.map((option, index) => (
@@ -204,7 +234,7 @@ export function Select({
               </li>
             )}
           </ul>
-        </div>
+        </div>, document.body
       )}
     </div>
   );
@@ -225,7 +255,7 @@ export function MultiSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const root = useRef<HTMLDivElement>(null);
+  const { root, menu } = useFloatingMenu(open);
   const filtered = useMemo(
     () =>
       options.filter((item) =>
@@ -238,11 +268,11 @@ export function MultiSelect({
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
+      if (!root.current?.contains(event.target as Node) && !menu.current?.contains(event.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
-  }, []);
+  }, [root, menu]);
 
   return (
     <div ref={root} className="relative min-w-0 max-w-full">
@@ -251,7 +281,8 @@ export function MultiSelect({
         aria-label={label}
         aria-expanded={open}
         className={cn(
-          "flex min-h-11 w-full min-w-0 max-w-full items-center justify-between gap-2 rounded-[10px] border bg-surface px-3 text-left text-sm",
+          "flex min-h-11 w-full min-w-0 max-w-full items-center justify-between gap-2 rounded-xl border bg-surface px-3.5 text-left text-sm shadow-sm transition-colors hover:border-[var(--school-primary)] hover:bg-surface-muted",
+          open && "border-[var(--school-primary)] bg-surface-muted",
           error && "border-danger",
         )}
         onClick={() => setOpen((current) => !current)}
@@ -269,20 +300,21 @@ export function MultiSelect({
                 .join(", ")
             : placeholder}
         </span>
-        <ChevronDown className="shrink-0" size={16} />
+        <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-[var(--school-secondary-soft)] text-[var(--school-secondary-ink)]"><ChevronDown className={open ? "rotate-180" : ""} size={15} /></span>
       </button>
       {error && <p className="mt-1 text-xs text-danger">{error}</p>}
-      {open && (
+      {open && createPortal(
         <div
+          ref={menu}
           role="listbox"
         aria-multiselectable="true"
-          className="absolute inset-x-0 z-[80] mt-1 max-h-[min(20rem,60vh)] min-w-0 max-w-full overflow-hidden rounded-xl border bg-surface shadow-xl"
+          className="fixed z-[100] max-h-[min(20rem,60vh)] min-w-0 overflow-hidden rounded-xl border bg-surface shadow-xl"
         >
           {searchable && (
             <label className="relative block border-b p-2">
               <span className="sr-only">Search {label}</span>
               <Search
-                className="absolute left-5 top-1/2 -translate-y-1/2 text-muted"
+                className="absolute left-5 top-1/2 -translate-y-1/2 text-[var(--school-secondary-ink)]"
                 size={15}
               />
               <Input
@@ -334,7 +366,7 @@ export function MultiSelect({
             <p className="p-4 text-center text-sm text-muted">{emptyMessage}</p>
           )}
           </div>
-        </div>
+        </div>, document.body
       )}
     </div>
   );

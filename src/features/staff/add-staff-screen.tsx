@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowLeft, BookOpenCheck, GraduationCap, UserRoundCog } from "lucide-react";
+import { BookOpenCheck, GraduationCap, UserRoundCog } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { ProfileImageField } from "@/components/shared/profile-image-field";
@@ -62,7 +62,7 @@ export function AddStaffScreen() {
 
   return (
     <div className="w-full min-w-0">
-      <PageHeader title="Add staff member" description="Create a teaching or non-teaching staff profile." action={<Link href="/admin/staff" className={buttonStyles("outline")}><ArrowLeft size={16} />Back to Staff & HR</Link>} />
+      <PageHeader title="Add staff member" description="Create a teaching or non-teaching staff profile." backFallback="/admin/staff" />
       <Card className="p-5">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div><h2 className="font-semibold">Staff details</h2><p className="mt-1 text-sm text-muted">Start with identity and staff type. Teaching assignments only appear when they are needed.</p></div>

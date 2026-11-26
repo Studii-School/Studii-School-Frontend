@@ -2,7 +2,7 @@
 
 import type { FeatureKey } from "@/types";
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
+export const API_URL = "/backend";
 export const SWAGGER_DOCS_PATH = "/api/docs";
 
 export type BackendRole =
@@ -114,6 +114,38 @@ export async function login(email: string, password: string) {
   window.dispatchEvent(new CustomEvent(AUTH_SESSION_EVENT));
 
   return data.user;
+}
+
+export async function verifyAdminPassword(password: string) {
+  const currentUser = await getProfile();
+  const email = currentUser.email?.trim();
+  const adminRoles = new Set(["SCHOOL_ADMIN", "SUPER_ADMIN"]);
+  if (!email || !adminRoles.has(currentUser.role ?? "")) {
+    throw new Error("Only an administrator can enable historical editing.");
+  }
+
+  // Verify credentials without replacing the active session or logging out on a bad password.
+  const response = await fetch(`${API_URL}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(response.status < 500 ? "Incorrect password. Please try again." : "Password verification is unavailable. Please try again.");
+  }
+
+  const data = await response.json() as LoginResponse;
+  const verified = data.user;
+  const sameIdentity = currentUser.id && verified?.id
+    ? currentUser.id === verified.id
+    : verified?.email?.trim().toLowerCase() === email.toLowerCase();
+  const currentSchoolId = currentUser.schoolId ?? currentUser.school?.id;
+  const verifiedSchoolId = verified?.schoolId ?? verified?.school?.id;
+  if (!sameIdentity || !adminRoles.has(verified?.role ?? "") ||
+    (currentSchoolId && currentSchoolId !== verifiedSchoolId)) {
+    throw new Error("The password must belong to the signed-in administrator.");
+  }
 }
 
 export async function firstTimePassword(email: string, password: string) {

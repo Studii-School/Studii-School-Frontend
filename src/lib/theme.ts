@@ -34,6 +34,28 @@ function mix(hex: string, target: string, weight: number) {
   });
 }
 
+function contrastRatio(first: string, second: string) {
+  const luminance = (hex: string) => {
+    const { r, g, b } = hexToRgb(hex);
+    const channels = [r, g, b].map((value) => {
+      const channel = value / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+  };
+  const light = Math.max(luminance(first), luminance(second));
+  const dark = Math.min(luminance(first), luminance(second));
+  return (light + 0.05) / (dark + 0.05);
+}
+
+function readableBrandInk(color: string, surface: string, dark: boolean) {
+  for (let step = 0; step <= 20; step += 1) {
+    const candidate = mix(color, dark ? "#FFFFFF" : "#000000", step / 20);
+    if (contrastRatio(candidate, surface) >= 4.5) return candidate;
+  }
+  return dark ? "#FFFFFF" : "#000000";
+}
+
 function userThemeKey() {
   if (typeof window === "undefined") return USER_THEME_KEY;
   try {
@@ -69,28 +91,35 @@ export function applyPortalTheme(settings: SchoolSettings, theme: ThemeChoice) {
   const secondary = resolveColor(settings.branding.secondaryColor) ?? "#0F766E";
   const accent = resolveColor(settings.branding.accentColor) ?? "#F59E0B";
   const dark = theme === "dark";
+  const surface = dark ? "#111827" : "#FAFAF9";
 
   const vars: Record<string, string> = {
-    "--background": dark ? "#0B1120" : "#FFFFFF",
+    "--background": dark ? "#0B1120" : "#F0F1EF",
     "--foreground": dark ? "#E5E7EB" : "#172033",
     "--primary": primary,
     "--primary-hover": mix(primary, dark ? "#FFFFFF" : "#000000", dark ? 0.12 : 0.16),
     "--primary-light": dark ? mix(primary, "#0B1120", 0.68) : mix(primary, "#FFFFFF", 0.86),
     "--secondary": secondary,
     "--secondary-light": dark ? mix(secondary, "#0B1120", 0.72) : mix(secondary, "#FFFFFF", 0.86),
-    "--surface": dark ? "#111827" : "#FFFFFF",
-    "--surface-muted": dark ? "#1F2937" : "#F8FAFC",
-    "--border": dark ? "#334155" : "#E2E8F0",
+    "--surface": surface,
+    "--surface-muted": dark ? "#1F2937" : "#E8EAE7",
+    "--border": dark ? "#334155" : "#D6D9D4",
     "--muted": dark ? "#9CA3AF" : "#64748B",
     "--success": dark ? "#4ADE80" : "#15803D",
     "--warning": dark ? "#FBBF24" : "#B45309",
     "--danger": dark ? "#F87171" : "#B91C1C",
     "--school-primary": primary,
     "--school-primary-foreground": getContrastText(primary),
+    "--school-primary-ink": readableBrandInk(primary, surface, dark),
+    "--school-primary-soft": dark ? mix(primary, "#0B1120", 0.7) : mix(primary, "#FFFFFF", 0.88),
     "--school-secondary": secondary,
     "--school-secondary-foreground": getContrastText(secondary),
+    "--school-secondary-ink": readableBrandInk(secondary, surface, dark),
+    "--school-secondary-soft": dark ? mix(secondary, "#0B1120", 0.7) : mix(secondary, "#FFFFFF", 0.88),
     "--school-accent": accent,
     "--school-accent-foreground": getContrastText(accent),
+    "--school-accent-ink": readableBrandInk(accent, surface, dark),
+    "--school-accent-soft": dark ? mix(accent, "#0B1120", 0.7) : mix(accent, "#FFFFFF", 0.86),
   };
 
   Object.entries(vars).forEach(([key, value]) => root.style.setProperty(key, value));

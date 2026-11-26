@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname } from "next/navigation";
 import { AUTH_SESSION_EVENT } from "@/lib/api";
 import { readStoredUser } from "@/lib/auth";
 import { applyPortalTheme, readUserTheme, saveUserTheme, USER_THEME_EVENT, type ThemeChoice } from "@/lib/theme";
@@ -23,10 +24,26 @@ function normalizeSettings(settings: SchoolSettings): SchoolSettings {
 }
 
 function applyFavicon(settings: SchoolSettings) {
-  let icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]'); if (!icon) { icon = document.createElement("link"); icon.rel = "icon"; document.head.appendChild(icon); } icon.href = settings.faviconUrl ?? "/favicon.ico";
+  const href = settings.faviconUrl || settings.crestUrl || settings.logoUrl || "/favicon.ico";
+  const icons = document.querySelectorAll<HTMLLinkElement>(
+    'link[rel="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"]',
+  );
+  if (!icons.length) {
+    const icon = document.createElement("link");
+    icon.rel = "icon";
+    document.head.appendChild(icon);
+    icon.href = href;
+    return;
+  }
+  icons.forEach((icon) => {
+    icon.removeAttribute("type");
+    icon.removeAttribute("sizes");
+    icon.href = href;
+  });
 }
 
 export function SchoolSettingsProvider({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   const [settings, setSettings] = useState(defaultSchoolSettings); const [savedSettings, setSavedSettings] = useState(defaultSchoolSettings);
   const [selectedTheme, setSelectedThemeState] = useState<ThemeChoice>("light");
   const [isLoading, setIsLoading] = useState(true); const [isSaving, setIsSaving] = useState(false);
@@ -46,6 +63,7 @@ export function SchoolSettingsProvider({ children }: { children: React.ReactNode
     }
   }, []);
   useEffect(() => { void loadSettings(); }, [loadSettings]);
+  useEffect(() => { applyFavicon(settings); }, [pathname, settings]);
   useEffect(() => {
     const refresh = () => void loadSettings();
     const refreshFromStorage = (event: StorageEvent) => {

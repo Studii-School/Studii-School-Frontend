@@ -55,7 +55,7 @@ export function AdminClassReportScreen({ classId }: { classId: string }) {
   const { sessionRegisters } = useAttendance();
   const { allState: finance } = useFinance();
   const { settings } = useSchoolSettings();
-  const { selectedSession, selectedTerm } = useAcademicPeriod();
+  const { selectedSession, selectedTerm, scope } = useAcademicPeriod();
   const schoolClass = academics.classes.find((item) => item.id === classId);
 
   if (!schoolClass) {
@@ -67,12 +67,12 @@ export function AdminClassReportScreen({ classId }: { classId: string }) {
   const periodTermLabel = selectedTerm ? academicTermLabel(selectedTerm.name) : settings.currentTerm;
   const classRegisters = sessionRegisters.filter((register) => register.classId === classId && register.status !== "DRAFT");
   const attendanceEntries = classRegisters.flatMap((register) => register.entries);
-  const sessionPeriod = { academicSessionId: selectedSession?.id, startDate: selectedSession?.startDate, endDate: selectedSession?.endDate };
+  const sessionPeriod = { academicSessionId: selectedSession?.id, startDate: selectedSession?.startDate, endDate: selectedSession?.endDate, isCurrentPeriod: scope.isCurrentPeriod };
   const attendanceRate = students.length
-    ? Math.round(students.reduce((sum, student) => sum + getAttendanceSummaryForStudent(sessionRegisters, student.id, sessionPeriod).percentage, 0) / students.length)
+    ? Math.round(students.reduce((sum, student) => sum + getAttendanceSummaryForStudent(sessionRegisters, student.id, { ...sessionPeriod, studentStartDate: student.admissionDate }).percentage, 0) / students.length)
     : 0;
   const presentCount = attendanceEntries.filter((entry) => entry.status === "PRESENT").length;
-  const absentCount = attendanceEntries.filter((entry) => entry.status === "ABSENT").length;
+  const absentCount = students.reduce((count, student) => count + getAttendanceSummaryForStudent(sessionRegisters, student.id, { ...sessionPeriod, studentStartDate: student.admissionDate }).absent, 0);
   const lateCount = attendanceEntries.filter((entry) => entry.status === "LATE").length;
   const excusedCount = attendanceEntries.filter((entry) => entry.status === "EXCUSED").length;
   const classAssignments = filterAssignmentsByPeriod(assignments.assignments, {
@@ -165,7 +165,7 @@ export function AdminClassReportScreen({ classId }: { classId: string }) {
     const studentInvoices = invoices.filter((invoice) => invoice.studentId === student.id);
     return {
       student,
-      attendance: getAttendanceSummaryForStudent(sessionRegisters, student.id, sessionPeriod).percentage,
+      attendance: getAttendanceSummaryForStudent(sessionRegisters, student.id, { ...sessionPeriod, studentStartDate: student.admissionDate }).percentage,
       score: studentSubmissions.length ? Math.round(studentSubmissions.reduce((sum, item) => sum + (item.score ?? 0), 0) / studentSubmissions.length) : 0,
       outstanding: studentInvoices.reduce((sum, item) => sum + item.outstandingBalance, 0),
       hasInvoice: studentInvoices.length > 0,

@@ -7,7 +7,9 @@ import { PersonNameLink } from "@/features/people/person-name-link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/number-input";
+import { Select } from "@/components/ui/select";
 import { formatNaira } from "@/lib/currency";
+import { formatDate } from "@/lib/date-utils";
 import { InvoiceStatusBadge } from "../components/fee-status-badge";
 import { useFinance } from "../finance-context";
 import type { PaymentMethod, StudentInvoice } from "../finance.types";
@@ -107,14 +109,14 @@ export function RecordPaymentForm({ initialInvoice, onClose }: { initialInvoice?
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="rounded-xl border p-4"><p className="text-xs text-muted">Student</p><p className="mt-1 font-semibold"><PersonNameLink kind="student" id={invoice.studentId}>{invoice.student}</PersonNameLink></p><p className="text-sm text-muted">{invoice.className} - {invoice.admissionNumber}</p></div>
           <div className="rounded-xl border p-4"><p className="text-xs text-muted">Invoice</p><p className="mt-1 font-semibold">{invoice.invoiceNumber}</p><p className="text-sm text-muted">Balance {formatNaira(invoice.outstandingBalance)}</p></div>
-          <div className="sm:col-span-2"><p className="mb-2 text-sm font-semibold">Previous payments</p><div className="divide-y rounded-xl border">{allState.payments.filter((item) => item.invoiceId === invoice.id).map((item) => <div key={item.id} className="flex justify-between p-3 text-sm"><span>{item.paymentDate} - {item.method}</span><b>{formatNaira(item.amount)}</b></div>)}</div></div>
+          <div className="sm:col-span-2"><p className="mb-2 text-sm font-semibold">Previous payments</p><div className="divide-y rounded-xl border">{allState.payments.filter((item) => item.invoiceId === invoice.id).map((item) => <div key={item.id} className="flex justify-between p-3 text-sm"><span>{formatDate(item.paymentDate)} - {item.method}</span><b>{formatNaira(item.amount)}</b></div>)}</div></div>
         </div>
       )}
       {step === 3 && (
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="text-sm font-medium">Amount paid<MoneyInput className="mt-2" min="1" value={amount} onValueChange={setAmount} /></label>
           <label className="text-sm font-medium">Payment date<Input className="mt-2" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
-          <label className="text-sm font-medium">Payment method<select className="mt-2 h-11 w-full rounded-[10px] border bg-surface px-3" value={method} onChange={(event) => setMethod(event.target.value as PaymentMethod)}>{methods.map((item) => <option key={item}>{item}</option>)}</select></label>
+          <div className="text-sm font-medium">Payment method<Select className="mt-2" label="Payment method" value={method} onChange={(value) => setMethod(value as PaymentMethod)} options={methods.map((value) => ({ value, label: value }))}/></div>
           <label className="text-sm font-medium">Bank or provider<Input className="mt-2" value={bank} onChange={(event) => setBank(event.target.value)} /></label>
           <label className="text-sm font-medium">Transaction reference<Input className="mt-2" value={reference} onChange={(event) => setReference(event.target.value.toUpperCase())} placeholder="GF-TRF-2026-00422" /></label>
           <label className="text-sm font-medium">Payer name<Input className="mt-2" value={payer} onChange={(event) => setPayer(event.target.value)} /></label>

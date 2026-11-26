@@ -6,10 +6,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { PasswordField } from "@/components/ui/password-field";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { SectionCard } from "@/components/dashboard/section-card";
+import { TablePagination, usePaginatedRows } from "@/components/ui/table-pagination";
 import { SearchInput } from "@/components/shared/search-input";
 import { DashboardQuickLinks } from "@/features/dashboard-customisation/dashboard-quick-links";
 import { DEFAULT_SCHOOL_ID, getSchoolFeatureSettings, loadSchoolFeatureSettings, schoolFeatures, type SchoolFeatureSettings, updateSchoolFeatureSettings } from "@/lib/school-features";
@@ -164,14 +166,11 @@ export function SuperAdminSchoolsScreen() {
           <Card className="p-5">
             <h2 className="text-sm font-semibold">Add school admin</h2>
             <form className="mt-4 space-y-3" onSubmit={submitAdmin}>
-              <select className="h-11 w-full rounded-[10px] border bg-surface px-3 text-sm" required value={adminForm.schoolId} onChange={(event) => setAdminForm({ ...adminForm, schoolId: event.target.value })}>
-                <option value="">Select school</option>
-                {schools.map((school) => <option key={schoolKey(school)} value={schoolKey(school)}>{school.name ?? school.code ?? schoolKey(school)}</option>)}
-              </select>
+              <Select label="School" placeholder="Select school" value={adminForm.schoolId} onChange={(schoolId) => setAdminForm({ ...adminForm, schoolId })} options={schools.map((school) => ({ value: schoolKey(school), label: school.name ?? school.code ?? schoolKey(school) }))}/>
               <Input required minLength={2} placeholder="Admin name" value={adminForm.name} onChange={(event) => setAdminForm({ ...adminForm, name: event.target.value })} />
               <Input required type="email" placeholder="Admin email" value={adminForm.email} onChange={(event) => setAdminForm({ ...adminForm, email: event.target.value })} />
               <PasswordField label="Temporary password" required value={adminForm.password} onChange={(event) => setAdminForm({ ...adminForm, password: event.target.value })} />
-              <Button className="w-full" type="submit" disabled={pending === "create-admin"}><ShieldPlus size={16} />Create admin</Button>
+              <Button className="w-full" type="submit" disabled={!adminForm.schoolId || pending === "create-admin"}><ShieldPlus size={16} />Create admin</Button>
             </form>
           </Card>
         </div>
@@ -270,9 +269,7 @@ export function SuperAdminFeaturesScreen() {
       <div className="grid gap-5 xl:grid-cols-[20rem_minmax(0,1fr)]">
         <Card className="p-5">
           <h2 className="text-sm font-semibold">School</h2>
-          <select className="mt-4 h-11 w-full rounded-[10px] border bg-surface px-3 text-sm" value={selectedSchoolId} onChange={(event) => setSelectedSchoolId(event.target.value)}>
-            {schoolOptions.map((school) => <option key={school.id} value={school.id}>{school.label}</option>)}
-          </select>
+          <Select className="mt-4" label="School" placeholder="Select school" value={selectedSchoolId} onChange={setSelectedSchoolId} options={schoolOptions.map((school) => ({ value: school.id, label: school.label }))}/>
           <dl className="mt-5 space-y-3 text-sm">
             <div className="flex items-center justify-between gap-3"><dt className="text-muted">Selected</dt><dd className="truncate font-medium">{selectedSchool?.label ?? selectedSchoolId}</dd></div>
             <div className="flex items-center justify-between gap-3"><dt className="text-muted">Modules</dt><dd><Badge tone={enabledFeatureCount === schoolFeatures.length ? "success" : "warning"}>{enabledFeatureCount}/{schoolFeatures.length} enabled</Badge></dd></div>
@@ -307,7 +304,8 @@ export function SuperAdminFeaturesScreen() {
 }
 
 function SchoolTable({ schools, loading, onSuspend, onReactivate, onDelete, pending }: { schools: SchoolRecord[]; loading: boolean; onSuspend?: (id: string) => void; onReactivate?: (id: string) => void; onDelete?: (id: string) => void; pending?: string }) {
+  const pagination = usePaginatedRows(schools, `${schools.length}|${schools[0]?.name}|${schools[schools.length - 1]?.name}`);
   if (loading) return <p className="p-8 text-center text-sm text-muted">Loading schools...</p>;
   if (!schools.length) return <p className="p-8 text-center text-sm text-muted">No schools found.</p>;
-  return <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-surface-muted/70 text-xs uppercase tracking-wide text-muted"><tr><th className="px-4 py-3 font-medium">School</th><th className="px-4 py-3 font-medium">Contact</th><th className="px-4 py-3 font-medium">Status</th>{onSuspend && <th className="px-4 py-3 font-medium">Actions</th>}</tr></thead><tbody className="divide-y">{schools.map((school) => { const id = schoolKey(school); const suspended = statusTone(school.status) === "warning"; return <tr className="hover:bg-surface-muted/40" key={id || school.name}><td className="px-4 py-3.5"><p className="font-medium">{school.name ?? "Unnamed school"}</p><p className="mt-0.5 text-xs text-muted">{school.code ?? id}</p></td><td className="px-4 py-3.5"><p>{school.email ?? "No email"}</p><p className="mt-0.5 text-xs text-muted">{school.phone ?? school.address ?? "No phone"}</p></td><td className="px-4 py-3.5"><Badge tone={statusTone(school.status)}>{school.status ?? "Unknown"}</Badge></td>{onSuspend && <td className="px-4 py-3.5"><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" className="min-h-9 px-3" disabled={!id || pending === `suspend-${id}` || pending === `reactivate-${id}`} onClick={() => suspended ? onReactivate?.(id) : onSuspend?.(id)}>{suspended ? "Reactivate" : "Suspend"}</Button><Button type="button" variant="danger" className="min-h-9 px-3" disabled={!id || pending === `delete-${id}`} onClick={() => onDelete?.(id)}><Trash2 size={15} />Delete</Button></div></td>}</tr>; })}</tbody></table></div>;
+  return <><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-surface-muted/70 text-xs uppercase tracking-wide text-muted"><tr><th className="px-4 py-3 font-medium">School</th><th className="px-4 py-3 font-medium">Contact</th><th className="px-4 py-3 font-medium">Status</th>{onSuspend && <th className="px-4 py-3 font-medium">Actions</th>}</tr></thead><tbody className="divide-y">{pagination.rows.map((school) => { const id = schoolKey(school); const suspended = statusTone(school.status) === "warning"; return <tr className="hover:bg-surface-muted/40" key={id || school.name}><td className="px-4 py-3.5"><p className="font-medium">{school.name ?? "Unnamed school"}</p><p className="mt-0.5 text-xs text-muted">{school.code ?? id}</p></td><td className="px-4 py-3.5"><p>{school.email ?? "No email"}</p><p className="mt-0.5 text-xs text-muted">{school.phone ?? school.address ?? "No phone"}</p></td><td className="px-4 py-3.5"><Badge tone={statusTone(school.status)}>{school.status ?? "Unknown"}</Badge></td>{onSuspend && <td className="px-4 py-3.5"><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" className="min-h-9 px-3" disabled={!id || pending === `suspend-${id}` || pending === `reactivate-${id}`} onClick={() => suspended ? onReactivate?.(id) : onSuspend?.(id)}>{suspended ? "Reactivate" : "Suspend"}</Button><Button type="button" variant="danger" className="min-h-9 px-3" disabled={!id || pending === `delete-${id}`} onClick={() => onDelete?.(id)}><Trash2 size={15} />Delete</Button></div></td>}</tr>; })}</tbody></table></div><TablePagination label="Schools" total={pagination.total} page={pagination.page} pageCount={pagination.pageCount} pageSize={pagination.pageSize} start={pagination.start} onPageChange={pagination.setPage} onPageSizeChange={pagination.setPageSize} /></>;
 }

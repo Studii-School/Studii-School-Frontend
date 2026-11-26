@@ -2772,7 +2772,7 @@ class BackendAcademicsRepository extends LocalAcademicsRepository {
     const existing = local.students.find((item) => item.id === input.studentId);
     const updated = mergeStudentFallback(mapBackendStudent(unwrapStudentResponse(await apiRequest<BackendStudent | { student: BackendStudent }>(`/students/${input.studentId}/class`, {
       method: "PATCH",
-      body: JSON.stringify({ classId: input.classId, academicSessionId: context.academicSessionId, effectiveDate: input.effectiveDate, reason: input.reason }),
+      body: JSON.stringify({ classId: input.classId }),
     }))), { ...existing, classId: input.classId, updatedAt: new Date().toISOString() } as Student);
     await this.saveLocalStudent(updated);
     if (local.classes.some((item) => item.id === input.classId && item.schoolId === context.schoolId)) {

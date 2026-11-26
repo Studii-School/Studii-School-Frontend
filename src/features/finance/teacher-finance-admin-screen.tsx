@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
+import { ButtonTabs } from "@/components/ui/tabs";
 import { SectionCard } from "@/components/dashboard/section-card";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { SearchInput } from "@/components/shared/search-input";
@@ -15,6 +16,7 @@ import { useActionFeedback } from "@/features/action-feedback/action-feedback-co
 import { useAcademics } from "@/features/academics/academics-context";
 import { PersonNameLink } from "@/features/people/person-name-link";
 import { formatNaira } from "@/lib/currency";
+import { formatDate } from "@/lib/date-utils";
 import { readStoredToken } from "@/lib/api";
 import { financeApi } from "./finance.api";
 import { financeRepository } from "./finance.repository";
@@ -237,9 +239,7 @@ export function TeacherFinanceAdminScreen() {
         </> : <Button onClick={() => openEntryForm("other")} disabled={!rows.length}>Add staff payment</Button>}
       </div>
     </div>
-    <nav className="mb-5 flex gap-2 border-b" aria-label="Staff payments sections">
-      {(["Payroll", "Other staff payments"] as const).map((item) => <button key={item} type="button" onClick={() => setTab(item)} className={`border-b-2 px-3 py-3 text-sm font-medium ${tab === item ? "border-[var(--school-primary)] text-[var(--school-primary)]" : "border-transparent text-muted"}`}>{item}</button>)}
-    </nav>
+    <ButtonTabs label="Staff payments sections" items={["Payroll", "Other staff payments"] as const} value={tab} onChange={setTab} />
 
     {tab === "Payroll" ? <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-3">
@@ -251,7 +251,7 @@ export function TeacherFinanceAdminScreen() {
         <div className="border-b p-4"><SearchInput value={query} onChange={setQuery} placeholder="Find a staff member" /></div>
         {loading ? <p className="p-6 text-sm text-muted">Loading staff payments…</p> : visiblePayrollRows.length ? <div className="divide-y px-4 sm:px-5">
           {visiblePayrollRows.map(({ staff, salary, deductions, net, salaryEntry, entries }) => <div key={staff.staffUserId} className="grid gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-            <div className="min-w-0"><p className="truncate font-semibold"><PersonNameLink kind="staff" id={staff.staffUserId}>{staff.staffName}</PersonNameLink></p><p className="text-xs text-muted">{staff.jobTitle || (staff.isTeachingStaff ? "Teaching staff" : "Staff")}{staff.employeeNumber ? ` · ${staff.employeeNumber}` : ""}{` · Due ${salaryEntry?.dueDate ?? lastDay(period)}`}</p><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs"><span>Salary <b>{formatNaira(salary)}</b></span><span className="text-muted">Deductions <b>{formatNaira(deductions)}</b></span><span className="text-success">Take home <b>{formatNaira(net)}</b></span></div>
+            <div className="min-w-0"><p className="truncate font-semibold"><PersonNameLink kind="staff" id={staff.staffUserId}>{staff.staffName}</PersonNameLink></p><p className="text-xs text-muted">{staff.jobTitle || (staff.isTeachingStaff ? "Teaching staff" : "Staff")}{staff.employeeNumber ? ` · ${staff.employeeNumber}` : ""}{` · Due ${formatDate(salaryEntry?.dueDate ?? lastDay(period))}`}</p><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs"><span>Salary <b>{formatNaira(salary)}</b></span><span className="text-muted">Deductions <b>{formatNaira(deductions)}</b></span><span className="text-success">Take home <b>{formatNaira(net)}</b></span></div>
               {!salaryEntry && <label className="mt-3 block max-w-52 text-xs font-medium">Monthly salary (₦)<Input className="mt-1" aria-label={`Monthly salary for ${staff.staffName}`} type="number" min="0" step="0.01" inputMode="decimal" value={salaryOverrides[staff.staffUserId] ?? (staff.salaryAmount ? String(staff.salaryAmount) : "")} onChange={(event) => setSalaryOverrides((current) => ({ ...current, [staff.staffUserId]: event.target.value }))} placeholder="Enter amount" /></label>}
               {entries.filter((entry) => entry.type === "DEDUCTION").map((entry) => <p key={entry.id} className="mt-1 text-xs text-muted">− {entry.title}: {formatNaira(entry.amount)}</p>)}
             </div>
