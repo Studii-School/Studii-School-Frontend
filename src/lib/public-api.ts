@@ -1,6 +1,6 @@
 "use client";
 
-import { API_URL, AUTH_SESSION_EVENT, type LoginResponse } from "./api";
+import { API_URL } from "./api";
 
 async function publicPost<T>(path: string, payload: object): Promise<T> {
   let response: Response;
@@ -19,25 +19,6 @@ async function publicPost<T>(path: string, payload: object): Promise<T> {
     throw new Error(message || data?.error || "Your request could not be completed. Please try again.");
   }
   return data as T;
-}
-
-export type SchoolRegistration = {
-  schoolName: string;
-  schoolLevel: "PRIMARY" | "SECONDARY" | "BOTH" | "";
-  adminName: string;
-  email: string;
-  phone: string;
-  address?: string;
-  password: string;
-};
-
-export async function registerSchool(values: SchoolRegistration) {
-  const data = await publicPost<LoginResponse>("/auth/register-school", values);
-  if (!data.accessToken || !data.user?.schoolId) throw new Error("Registration succeeded, but sign-in is not ready. Please sign in with your new account.");
-  localStorage.setItem("accessToken", data.accessToken);
-  localStorage.setItem("user", JSON.stringify(data.user));
-  window.dispatchEvent(new CustomEvent(AUTH_SESSION_EVENT));
-  return data.user;
 }
 
 export type DemoRequest = {

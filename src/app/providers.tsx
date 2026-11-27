@@ -15,7 +15,7 @@ import { AdmissionsProvider } from "@/features/admissions/admissions-provider";
 import { AcademicPeriodProvider } from "@/features/academic-period/academic-period-provider";
 
 const authRoutes = new Set(["/login", "/forgot-password", "/reset-password", "/first-time-login"]);
-const publicRoutes = new Set(["/", "/register-school", "/schedule-demo"]);
+const publicRoutes = new Set(["/", "/schedule-demo", "/school-onboarding"]);
 
 export function AppProviders({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();

@@ -2,6 +2,7 @@
 
 import type { FeatureKey, NavigationItem } from "@/types";
 import { apiRequest } from "./api";
+import { isSuperAdminPreview } from "./super-admin-preview";
 
 export const DEFAULT_SCHOOL_ID = "school-001";
 export const SCHOOL_FEATURES_EVENT = "schoolos:school-features-updated";
@@ -71,6 +72,7 @@ export function cacheSchoolFeatureSettings(schoolId: string, settings: Partial<R
 export const saveSchoolFeatureSettings = cacheSchoolFeatureSettings;
 
 export async function getSchoolFeatureSettings(schoolId: string) {
+  if (isSuperAdminPreview()) return defaultFeatureSettings;
   const data = await apiRequest<FeatureSettingsResponse>(`/schools/${schoolId}/features`);
   const settings = normaliseFeatureSettings(data.features);
   cacheSchoolFeatureSettings(schoolId, settings);
@@ -78,6 +80,7 @@ export async function getSchoolFeatureSettings(schoolId: string) {
 }
 
 export async function updateSchoolFeatureSettings(schoolId: string, features: Partial<Record<FeatureKey, boolean>>) {
+  if (isSuperAdminPreview()) throw new Error("Actions are unavailable in the local preview.");
   const data = await apiRequest<FeatureSettingsResponse>(`/schools/${schoolId}/features`, {
     method: "PATCH",
     body: JSON.stringify({ features }),

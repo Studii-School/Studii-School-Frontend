@@ -10,6 +10,7 @@ import { useSchoolSettings } from "@/features/school-settings/school-settings-co
 import { Button } from "@/components/ui/button";
 import { AUTH_SESSION_EVENT, getProfile, getTokenExpiryMs, logout, readStoredToken, type AuthUser } from "@/lib/api";
 import { displayUser, readStoredUser, routeForRole } from "@/lib/auth";
+import { isSuperAdminPreview } from "@/lib/super-admin-preview";
 import { cacheSchoolFeatureSettings, disabledFeatureForPath, featureLabel, filterNavigationByFeatures, loadSchoolFeatureSettings, normaliseFeatureSettings, resolveUserSchoolId, SCHOOL_FEATURES_EVENT } from "@/lib/school-features";
 import type { NavigationItem, User } from "@/types";
 
@@ -22,17 +23,19 @@ function readSession(): PortalSession {
   return { ready: true, token: readStoredToken(), user: readStoredUser() };
 }
 
-export function AuthenticatedPortalShell({ children, navigation, fallbackUser, allowedRoles = [fallbackUser.role] }: { children: React.ReactNode; navigation: NavigationItem[]; fallbackUser: User; allowedRoles?: User["role"][] }) {
+export function AuthenticatedPortalShell({ children, navigation, fallbackUser, allowedRoles = [fallbackUser.role], allowLocalPreview = false }: { children: React.ReactNode; navigation: NavigationItem[]; fallbackUser: User; allowedRoles?: User["role"][]; allowLocalPreview?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const [session, setSession] = useState(INITIAL_SESSION);
   const [profileUser, setProfileUser] = useState<AuthUser | null>(null);
-  const user = useMemo(() => displayUser(profileUser ?? session.user, fallbackUser), [fallbackUser, profileUser, session.user]);
+  const preview = allowLocalPreview && session.ready && isSuperAdminPreview();
+  const user = useMemo(() => displayUser(preview ? null : profileUser ?? session.user, fallbackUser), [fallbackUser, preview, profileUser, session.user]);
   const schoolId = resolveUserSchoolId(user);
   const period = useAcademicPeriod();
   const { settings } = useSchoolSettings();
   const isAdmin = user.role === "Administrator";
-  const isHistoricalReadOnly = !period.scope.isCurrentPeriod && !(isAdmin && settings.historicalEditingEnabled);
+  const hasSelectedTerm = Boolean(period.selectedSession && period.selectedTerm);
+  const isHistoricalReadOnly = user.role !== "Super Administrator" && hasSelectedTerm && !period.scope.isCurrentPeriod && !(isAdmin && settings.historicalEditingEnabled);
   const [featureSettings, setFeatureSettings] = useState(() => normaliseFeatureSettings(user.features));
 
   useEffect(() => {
@@ -72,6 +75,7 @@ export function AuthenticatedPortalShell({ children, navigation, fallbackUser, a
 
   useEffect(() => {
     if (!session.ready) return;
+    if (preview) return;
     if (!session.token || !session.user || session.token === "development-token") {
       if (session.token || session.user) logout({ reason: "invalid" });
       router.replace("/login");
@@ -79,7 +83,7 @@ export function AuthenticatedPortalShell({ children, navigation, fallbackUser, a
     }
     const role = displayUser(session.user, fallbackUser).role;
     if (!allowedRoles.includes(role)) router.replace(routeForRole(role));
-  }, [allowedRoles, fallbackUser, router, session]);
+  }, [allowedRoles, fallbackUser, preview, router, session]);
 
   useEffect(() => {
     if (!session.ready || !session.token || !session.user || session.token === "development-token") return;
@@ -116,7 +120,7 @@ export function AuthenticatedPortalShell({ children, navigation, fallbackUser, a
     };
   }, [schoolId]);
 
-  const canRender = session.ready && session.token && session.user && session.token !== "development-token" && allowedRoles.includes(user.role);
+  const canRender = session.ready && (preview || (session.token && session.user && session.token !== "development-token" && allowedRoles.includes(user.role)));
   const visibleNavigation = useMemo(() => user.role === "Super Administrator" ? navigation : filterNavigationByFeatures(navigation, featureSettings), [featureSettings, navigation, user.role]);
   const disabledFeature = user.role === "Super Administrator" ? null : disabledFeatureForPath(pathname, navigation, featureSettings);
   const blockHistoricalWrite = isHistoricalReadOnly;
@@ -155,12 +159,13 @@ export function AuthenticatedPortalShell({ children, navigation, fallbackUser, a
 
   return (
     <FrequentPagesProvider
-      userId={session.user?.id ?? session.user?.email}
+      userId={preview ? "local-preview" : session.user?.id ?? session.user?.email}
       schoolId={schoolId}
       role={user.role}
       navigation={visibleNavigation}
     >
       <PortalShell navigation={visibleNavigation} user={user} historicalReadOnly={isHistoricalReadOnly}>
+        {preview && <div className="mb-4 rounded-lg border border-primary/30 bg-primary/5 p-4 text-sm" role="status"><strong>Local Super Administrator preview.</strong> This screen shows sample data. Changes are disabled and nothing is sent to the backend.</div>}
         <div
           onClickCapture={preventHistoricalAction}
           onChangeCapture={preventHistoricalFormChange}

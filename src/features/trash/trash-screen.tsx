@@ -67,7 +67,7 @@ function sampleMeta(item: TrashRecord) {
     .join(" - ");
 }
 
-export function TrashScreen() {
+export function TrashScreen({ platform = false }: { platform?: boolean } = {}) {
   const { selectedTerm } = useAcademicPeriod();
   const { settings } = useSchoolSettings();
   const [data, setData] = useState<TrashResponse>({ records: [], groups: [] });
@@ -90,17 +90,15 @@ export function TrashScreen() {
   };
 
   useEffect(() => {
-    void load("");
+    void Promise.resolve().then(() => load(""));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const periodScope = {
-    startDate: selectedTerm?.startDate || settings.resumptionDate,
-    endDate: selectedTerm?.endDate || settings.closingDate,
-    requireStartDate: Boolean(selectedTerm),
-  };
+  const startDate = selectedTerm?.startDate || settings.resumptionDate;
+  const endDate = selectedTerm?.endDate || settings.closingDate;
+  const requireStartDate = Boolean(selectedTerm);
   const periodRecords = useMemo(
     () =>
-      data.records.filter((item) => {
+      platform ? data.records : data.records.filter((item) => {
         const snapshot = item.snapshot ?? {};
         const dateValue =
           typeof snapshot.publishAt === "string" ? snapshot.publishAt :
@@ -108,9 +106,9 @@ export function TrashScreen() {
           typeof snapshot.date === "string" ? snapshot.date :
           typeof snapshot.createdAt === "string" ? snapshot.createdAt :
           item.deletedAt;
-        return dateBelongsToPeriod(dateValue, periodScope);
+        return dateBelongsToPeriod(dateValue, { startDate, endDate, requireStartDate });
       }),
-    [data.records, periodScope.endDate, periodScope.requireStartDate, periodScope.startDate],
+    [data.records, endDate, platform, requireStartDate, startDate],
   );
 
   const groups = useMemo(
@@ -154,7 +152,7 @@ export function TrashScreen() {
     <>
       <PageHeader
         title="Trash"
-        description="Deleted records are kept for 3 months, then removed automatically."
+        description={platform ? "Supported deleted records are kept for 3 months. Deleting an empty school is permanent." : "Deleted records are kept for 3 months, then removed automatically."}
         showBack={Boolean(selected)}
         onBack={() => { setSelected(""); void load(""); }}
         action={<Button variant="outline" onClick={() => void load()} disabled={loading}><RefreshCw size={16} />Refresh</Button>}

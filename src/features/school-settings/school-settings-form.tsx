@@ -136,12 +136,10 @@ function SubjectSettingsPanel({ levels }: { levels: ConfiguredSchoolLevel[] }) {
     [existingSubjects, form.level],
   );
 
-  useEffect(() => {
-    if (!visibleLevels.includes(form.level)) {
-      setForm((current) => ({ ...current, level: visibleLevels[0] }));
-      setSelectedPopularSubjects([]);
-    }
-  }, [form.level, visibleLevels]);
+  if (!visibleLevels.includes(form.level)) {
+    setForm({ ...form, level: visibleLevels[0] });
+    setSelectedPopularSubjects([]);
+  }
 
   const addSubjects = async () => {
     try {
@@ -285,7 +283,7 @@ function hasValidUrl(value?: string) {
   }
 }
 
-export function SchoolSettingsForm() {
+export function SchoolSettingsForm({ initialTab = "Profile" }: { initialTab?: SettingsTab } = {}) {
   const {
     settings,
     updateSettings,
@@ -296,11 +294,11 @@ export function SchoolSettingsForm() {
     hasUnsavedChanges,
   } = useSchoolSettings();
   const periods = useAcademicPeriod();
-  const historicalLocked = !periods.scope.isCurrentPeriod && !settings.historicalEditingEnabled;
+  const historicalLocked = Boolean(periods.selectedTerm) && !periods.scope.isCurrentPeriod && !settings.historicalEditingEnabled;
   const { setSchoolLevels } = useAcademics();
   const { toast } = useActionFeedback();
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [activeTab, setActiveTab] = useState<SettingsTab>("Profile");
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [hasPendingClassChanges, setHasPendingClassChanges] = useState(false);
   const [passwordPromptOpen, setPasswordPromptOpen] = useState(false);
   const [adminPassword, setAdminPassword] = useState("");

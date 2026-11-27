@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowRight, GraduationCap, Menu, X } from "lucide-react";
+import { GraduationCap, Menu, X } from "lucide-react";
 
 export function MarketingBrand() {
   return <Link className="marketing-brand" href="/" aria-label="SchoolOS home"><span className="marketing-brand-mark"><GraduationCap size={23} strokeWidth={2.1} /></span><span className="marketing-brand-word">School<span>OS</span><small>BY TTECHNOLOGIES</small></span></Link>;
@@ -26,7 +26,7 @@ export function MarketingHeader() {
       window.removeEventListener("resize", onResize);
     };
   }, [menuOpen]);
-  return <header className="marketing-header"><div className="marketing-container marketing-header-inner"><MarketingBrand /><nav aria-label="Main navigation"><Link href="/#platform">Platform</Link><Link href="/#how-it-works">How it works</Link><Link href="/#questions">Questions</Link></nav><div className="marketing-header-actions"><Link className="marketing-text-link" href="/login">Sign in</Link><Link className="marketing-button marketing-button-demo" href="/schedule-demo">Request a demo</Link><Link className="marketing-button marketing-button-dark" href="/register-school">Register your school <ArrowRight size={16} /></Link></div><div className="marketing-mobile-menu"><button type="button" aria-label={menuOpen ? "Close menu" : "Open menu"} aria-expanded={menuOpen} aria-controls="marketing-mobile-links" onClick={() => setMenuOpen((value) => !value)}>{menuOpen ? <X size={22} /> : <Menu size={22} />}</button>{menuOpen && <nav id="marketing-mobile-links" aria-label="Mobile navigation"><Link href="/#platform" onClick={() => setMenuOpen(false)}>Platform</Link><Link href="/#how-it-works" onClick={() => setMenuOpen(false)}>How it works</Link><Link href="/#questions" onClick={() => setMenuOpen(false)}>Questions</Link><Link href="/login" onClick={() => setMenuOpen(false)}>Sign in</Link><Link href="/schedule-demo" onClick={() => setMenuOpen(false)}>Request a demo</Link><Link href="/register-school" onClick={() => setMenuOpen(false)}>Register your school</Link></nav>}</div></div></header>;
+  return <header className="marketing-header"><div className="marketing-container marketing-header-inner"><MarketingBrand /><nav aria-label="Main navigation"><Link href="/#platform">Platform</Link><Link href="/#how-it-works">How it works</Link><Link href="/#questions">Questions</Link></nav><div className="marketing-header-actions"><Link className="marketing-text-link" href="/login">Sign in</Link><Link className="marketing-button marketing-button-demo" href="/schedule-demo">Request a demo</Link></div><div className="marketing-mobile-menu"><button type="button" aria-label={menuOpen ? "Close menu" : "Open menu"} aria-expanded={menuOpen} aria-controls="marketing-mobile-links" onClick={() => setMenuOpen((value) => !value)}>{menuOpen ? <X size={22} /> : <Menu size={22} />}</button>{menuOpen && <nav id="marketing-mobile-links" aria-label="Mobile navigation"><Link href="/#platform" onClick={() => setMenuOpen(false)}>Platform</Link><Link href="/#how-it-works" onClick={() => setMenuOpen(false)}>How it works</Link><Link href="/#questions" onClick={() => setMenuOpen(false)}>Questions</Link><Link href="/login" onClick={() => setMenuOpen(false)}>Sign in</Link><Link href="/schedule-demo" onClick={() => setMenuOpen(false)}>Request a demo</Link></nav>}</div></div></header>;
 }
 
 export function MarketingFooter() {

@@ -1,6 +1,7 @@
 "use client";
 
 import { apiRequest } from "@/lib/api";
+import { isSuperAdminPreview } from "@/lib/super-admin-preview";
 
 export interface TrashRecord {
   id: string;
@@ -26,11 +27,13 @@ export interface TrashResponse {
 }
 
 export async function getTrash(category?: string) {
+  if (isSuperAdminPreview()) return { records: [], groups: [] } as TrashResponse;
   const suffix = category ? `?category=${encodeURIComponent(category)}` : "";
   return apiRequest<TrashResponse>(`/trash${suffix}`);
 }
 
 export async function restoreTrashRecord(id: string) {
+  if (isSuperAdminPreview()) throw new Error("Actions are unavailable in the local preview.");
   try {
     return await apiRequest<void>(`/trash/${encodeURIComponent(id)}/restore`, { method: "POST" });
   } catch (caught) {

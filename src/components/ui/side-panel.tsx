@@ -31,6 +31,8 @@ export function SidePanel({
     previousFocus.current = document.activeElement as HTMLElement;
     closeRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
+      const modals = document.querySelectorAll('[aria-modal="true"]');
+      if (modals[modals.length - 1] !== panelRef.current) return;
       if (event.key === "Escape") onClose();
       if (event.key !== "Tab") return;
       const focusable = panelRef.current?.querySelectorAll<HTMLElement>(
@@ -47,10 +49,11 @@ export function SidePanel({
         first.focus();
       }
     };
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     document.addEventListener("keydown", onKeyDown);
     return () => {
-      document.body.style.overflow = "";
+      document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", onKeyDown);
       previousFocus.current?.focus();
     };

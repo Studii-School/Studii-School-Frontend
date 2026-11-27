@@ -59,3 +59,29 @@
 @media(max-width:640px){
   .marketing .marketing-form :is(input:not([type="checkbox"]),select,textarea){font-size:16px}
 }
+
+.marketing-form :is(input, textarea, select):focus-visible {
+  outline: 2px solid #0b6b68;
+  outline-offset: 2px;
+}
+
+.marketing-form fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0 0 18px;
+  border: 0;
+  border-bottom: 1px solid #d7e0df;
+}
+
+.marketing-form legend {
+  padding: 0;
+  margin-bottom: 12px;
+  color: #17243a;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.marketing-form-fields {
+  display: grid;
+  gap: 15px;
+}

@@ -1,5 +1,5 @@
-import { SuperAdminFeaturesScreen } from "@/features/super-admin/super-admin-screens";
+import { redirect } from "next/navigation";
 
 export default function SuperAdminFeaturesPage() {
-  return <SuperAdminFeaturesScreen />;
+  redirect("/super-admin/schools");
 }
