@@ -1,11 +1,10 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import { BookOpenCheck, BriefcaseBusiness, GraduationCap, Plus, Upload, UserRoundCog } from "lucide-react";
+import { useMemo, useState } from "react";
+import { BookOpenCheck, GraduationCap, Plus, Upload, UserRoundCog } from "lucide-react";
 import Link from "@/features/navigation-progress/navigation-progress-link";
 import { PersonNameLink } from "@/features/people/person-name-link";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { CsvImportDialog } from "@/components/shared/csv-import-dialog";
 import { ProfileImageField } from "@/components/shared/profile-image-field";
 import { SearchInput } from "@/components/shared/search-input";
 import { Badge } from "@/components/ui/badge";
@@ -16,10 +15,12 @@ import { Button, buttonStyles } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
 import { MoneyInput } from "@/components/ui/number-input";
 import { MultiSelect, Select } from "@/components/ui/select";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { useAcademics } from "@/features/academics/academics-context";
+import { useSchoolUnderReview } from "@/features/school-review/school-review-context";
 import type { StaffInput } from "@/features/academics/academics.types";
 import { downloadCsvFile } from "@/lib/csv-download";
 import { STAFF_IMPORT_TEMPLATE, STAFF_IMPORT_TEMPLATE_FILENAME } from "@/lib/import-templates";
@@ -52,30 +53,44 @@ const blankStaff: StaffInput = {
 };
 
 function parseCsv(text: string) {
-  const rows = text.split(/\r?\n/).filter((line) => line.trim());
-  const headers = rows.shift()?.split(",").map((item) => item.trim().toLowerCase()) ?? [];
-  return rows.map((line) => {
-    const cells = line.split(",").map((item) => item.trim().replace(/^"|"$/g, ""));
+  const rows: string[][] = [];
+  let cells: string[] = [], cell = "", quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '"') { if (quoted && text[index + 1] === '"') { cell += '"'; index += 1; } else quoted = !quoted; }
+    else if (char === "," && !quoted) { cells.push(cell.trim()); cell = ""; }
+    else if ((char === "\n" || char === "\r") && !quoted) { if (char === "\r" && text[index + 1] === "\n") index += 1; cells.push(cell.trim()); if (cells.some(Boolean)) rows.push(cells); cells = []; cell = ""; }
+    else cell += char;
+  }
+  if (quoted) throw new Error("CSV contains an unclosed quoted field.");
+  cells.push(cell.trim()); if (cells.some(Boolean)) rows.push(cells);
+  const headers = rows.shift()?.map((item) => item.trim().toLowerCase()) ?? [];
+  return rows.map((cells) => {
     return (name: string) => cells[headers.indexOf(name)] ?? "";
   });
 }
+
+type ImportPreviewRow = { row: number; name: string; email: string; role: string; issues: string[]; input: StaffInput };
 
 const normaliseKey = (value?: string) => value?.trim().replace(/\s+/g, " ").toLowerCase() ?? "";
 const normalisePhone = (value?: string) => value?.replace(/\D/g, "") ?? "";
 
 export function StaffHrScreen() {
   const { state, createStaff } = useAcademics();
+  const underReview = useSchoolUnderReview();
   const { toast } = useActionFeedback();
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<StaffInput>(blankStaff);
   const [query, setQuery] = useState("");
   const [role, setRole] = useState("");
   const [status, setStatus] = useState("");
-  const [selectedGroup, setSelectedGroup] = useState<"ALL" | "TEACHING" | "NON_TEACHING" | "SUSPENDED" | "">("");
+  const [selectedGroup, setSelectedGroup] = useState<"ALL" | "TEACHING" | "NON_TEACHING" | "SUSPENDED">("ALL");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [importDialogOpen, setImportDialogOpen] = useState(false);
-  const importInputRef = useRef<HTMLInputElement>(null);
+  const [importPreview, setImportPreview] = useState<ImportPreviewRow[]>([]);
+  const [importFileName, setImportFileName] = useState("");
+  const [importSaving, setImportSaving] = useState(false);
 
   const classOptions = state.classes
     .filter((item) => item.status === "ACTIVE")
@@ -108,66 +123,61 @@ export function StaffHrScreen() {
 
   const patch = <K extends keyof StaffInput>(key: K, value: StaffInput[K]) => setForm((current) => ({ ...current, [key]: value }));
 
-  const importStaff = async (file?: File) => {
+  const previewImport = async (file?: File) => {
     if (!file) return;
     try {
-      let imported = 0;
-      let skipped = 0;
       const existingEmails = new Set(state.staff.map((item) => normaliseKey(item.email)).filter(Boolean));
       const existingStaffIds = new Set(state.staff.map((item) => normaliseKey(item.employeeNumber)).filter(Boolean));
-      const existingNamePhones = new Set(
-        state.staff
-          .filter((item) => item.fullName && item.phone)
-          .map((item) => `${normaliseKey(item.fullName)}|${normalisePhone(item.phone)}`),
-      );
-      for (const get of parseCsv(await file.text())) {
+      const existingNamePhones = new Set(state.staff.filter((item) => item.fullName && item.phone).map((item) => `${normaliseKey(item.fullName)}|${normalisePhone(item.phone)}`));
+      const preview = parseCsv(await file.text()).map((get, index): ImportPreviewRow => {
         const name = get("name") || get("fullname");
         const email = get("email");
         const jobTitle = get("jobtitle") || get("role") || "Staff";
-        if (!name || !email) continue;
         const staffId = get("staffid") || get("employeenumber");
         const phone = get("phone");
-        const salaryAmount = Number(get("salaryamount") || 0);
-        const emailKey = normaliseKey(email);
-        const staffIdKey = normaliseKey(staffId);
-        const namePhoneKey = `${normaliseKey(name)}|${normalisePhone(phone)}`;
-        if (
-          existingEmails.has(emailKey) ||
-          (staffIdKey && existingStaffIds.has(staffIdKey)) ||
-          (phone && existingNamePhones.has(namePhoneKey))
-        ) {
-          skipped += 1;
-          continue;
-        }
-        const classNames = get("classes").split(/[|;]/).map((item) => item.trim()).filter(Boolean);
-        const subjectNames = get("subjects").split(/[|;]/).map((item) => item.trim()).filter(Boolean);
-        const assignedClassIds = state.classes.filter((item) => classNames.some((name) => item.displayName.toLowerCase() === name.toLowerCase())).map((item) => item.id);
-        const subjectIds = state.subjects.filter((item) => subjectNames.some((name) => item.name.toLowerCase() === name.toLowerCase() || item.code?.toLowerCase() === name.toLowerCase())).map((item) => item.id);
-        const isTeachingStaff = ["yes", "true", "teacher", "teaching"].includes((get("isteachingstaff") || get("teaching") || "").toLowerCase()) || assignedClassIds.length > 0;
-        await createStaff({
-          name,
-          email,
-          jobTitle,
-          employeeNumber: staffId || undefined,
-          department: get("department") || undefined,
-          phone: phone || undefined,
-          salaryAmount: salaryAmount || undefined,
-          isTeachingStaff,
-          assignedClassIds: isTeachingStaff ? assignedClassIds : [],
-          classTeacherClassIds: [],
-          subjectIds: isTeachingStaff ? subjectIds : [],
-          photoUrl: get("photourl") || get("imageurl") || undefined,
-        });
-        existingEmails.add(emailKey);
+        const rawSalary = get("salaryamount");
+        const salaryAmount = Number(rawSalary || 0);
+        const issues: string[] = [];
+        if (!name) issues.push("Name required");
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) issues.push("Valid email required");
+        if (rawSalary && (!Number.isFinite(salaryAmount) || salaryAmount < 0)) issues.push("Invalid salary");
+        const emailKey = normaliseKey(email), staffIdKey = normaliseKey(staffId), namePhoneKey = `${normaliseKey(name)}|${normalisePhone(phone)}`;
+        if (emailKey && existingEmails.has(emailKey)) issues.push("Duplicate email");
+        if (staffIdKey && existingStaffIds.has(staffIdKey)) issues.push("Duplicate staff ID");
+        if (phone && existingNamePhones.has(namePhoneKey)) issues.push("Duplicate name and phone");
+        if (emailKey) existingEmails.add(emailKey);
         if (staffIdKey) existingStaffIds.add(staffIdKey);
         if (phone) existingNamePhones.add(namePhoneKey);
-        imported += 1;
-      }
-      const skippedText = skipped ? ` ${skipped} duplicate${skipped === 1 ? "" : "s"} skipped.` : "";
-      toast(`${imported} staff member${imported === 1 ? "" : "s"} imported.${skippedText}`, imported ? "success" : "warning");
-    } catch (caught) {
-      toast(caught instanceof Error ? caught.message : "Staff import failed.", "error");
-    }
+        const classNames = get("classes").split(/[|;]/).map((item) => item.trim()).filter(Boolean);
+        const subjectNames = get("subjects").split(/[|;]/).map((item) => item.trim()).filter(Boolean);
+        const assignedClassIds = state.classes.filter((item) => classNames.some((value) => item.displayName.toLowerCase() === value.toLowerCase())).map((item) => item.id);
+        const subjectIds = state.subjects.filter((item) => subjectNames.some((value) => item.name.toLowerCase() === value.toLowerCase() || item.code?.toLowerCase() === value.toLowerCase())).map((item) => item.id);
+        if (classNames.length !== assignedClassIds.length) issues.push("Unknown class");
+        if (subjectNames.length !== subjectIds.length) issues.push("Unknown subject");
+        const isTeachingStaff = ["yes", "true", "teacher", "teaching"].includes((get("isteachingstaff") || get("teaching") || "").toLowerCase()) || assignedClassIds.length > 0;
+        return { row: index + 2, name, email, role: jobTitle, issues, input: {
+          name, email, jobTitle, employeeNumber: staffId || undefined, department: get("department") || undefined,
+          phone: phone || undefined, salaryAmount: salaryAmount || undefined, isTeachingStaff,
+          assignedClassIds: isTeachingStaff ? assignedClassIds : [], classTeacherClassIds: [],
+          subjectIds: isTeachingStaff ? subjectIds : [], photoUrl: get("photourl") || get("imageurl") || undefined,
+        } };
+      });
+      setImportFileName(file.name);
+      setImportPreview(preview);
+    } catch (caught) { toast(caught instanceof Error ? caught.message : "CSV could not be read.", "error"); }
+  };
+  const importStaff = async () => {
+    const valid = importPreview.filter((row) => row.issues.length === 0);
+    if (!valid.length) return;
+    setImportSaving(true);
+    let imported = 0;
+    const completedRows = new Set<number>();
+    try {
+      for (const row of valid) { await createStaff(row.input); imported += 1; completedRows.add(row.row); }
+      toast(`${imported} staff member${imported === 1 ? "" : "s"} imported.`, "success");
+      setImportDialogOpen(false); setImportPreview([]); setImportFileName("");
+    } catch (caught) { setImportPreview((current) => current.filter((row) => !completedRows.has(row.row))); toast(`${imported} imported. ${caught instanceof Error ? caught.message : "Remaining rows could not be saved."}`, "error"); }
+    finally { setImportSaving(false); }
   };
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -208,20 +218,21 @@ export function StaffHrScreen() {
       <PageHeader
         title="Staff & HR"
         description="Manage teaching and non-teaching staff in one clear school directory."
-        showBack={Boolean(selectedGroup)}
-        onBack={() => setSelectedGroup("")}
-        action={<div className="flex flex-wrap gap-2"><input ref={importInputRef} className="sr-only" type="file" accept=".csv,text/csv" onChange={(event) => { setImportDialogOpen(false); void importStaff(event.target.files?.[0]).finally(() => { event.target.value = ""; }); }}/><Button variant="outline" onClick={() => setImportDialogOpen(true)}><Upload size={16} />Import Staff</Button><Link href="/admin/staff/add" className={buttonStyles()}><Plus size={16} />Add Staff</Link></div>}
+        showBack={false}
+        action={<div className="flex flex-wrap gap-2"><Button variant="outline" disabled={underReview} title={underReview ? "Available after your school profile is approved" : undefined} onClick={() => setImportDialogOpen(true)}><Upload size={16} />Import staff</Button>{underReview ? <span aria-disabled="true" title="Available after your school profile is approved" className={buttonStyles("outline") + " cursor-not-allowed opacity-60"}><Plus size={16} />Add staff</span> : <Link href="/admin/staff/add" className={buttonStyles()}><Plus size={16} />Add staff</Link>}</div>}
       />
-      <CsvImportDialog
-        open={importDialogOpen}
-        title="Import staff and teachers"
-        description="Download the staff CSV template, or select a completed CSV containing teaching or non-teaching staff."
-        onClose={() => setImportDialogOpen(false)}
-        onDownloadTemplate={() => downloadCsvFile(STAFF_IMPORT_TEMPLATE_FILENAME, STAFF_IMPORT_TEMPLATE)}
-        onUpload={() => importInputRef.current?.click()}
-      />
+      <Modal open={importDialogOpen} title="Import staff" description="Download the template, then preview and validate rows before saving." onClose={() => setImportDialogOpen(false)} maxWidth="xl">
+        <div className="space-y-4">
+          <Button type="button" variant="outline" onClick={() => downloadCsvFile(STAFF_IMPORT_TEMPLATE_FILENAME, STAFF_IMPORT_TEMPLATE)}>Download CSV template</Button>
+          <label className="block text-sm font-medium">Choose a CSV file<Input className="mt-2" type="file" accept=".csv,text/csv" onChange={(event) => { void previewImport(event.target.files?.[0]); }} /></label>
+          {importFileName && <p className="text-sm text-muted">{importFileName} · {importPreview.filter((row) => !row.issues.length).length} ready · {importPreview.filter((row) => row.issues.length).length} need attention</p>}
+          {importPreview.length > 0 && <div className="max-h-72 overflow-auto rounded-lg border"><table className="w-full min-w-[540px] text-left text-sm"><thead className="sticky top-0 bg-surface-muted"><tr><th className="p-2">Row</th><th className="p-2">Name</th><th className="p-2">Email</th><th className="p-2">Role</th><th className="p-2">Validation</th></tr></thead><tbody>{importPreview.map((row) => <tr key={row.row} className="border-t"><td className="p-2">{row.row}</td><td className="p-2">{row.name || "—"}</td><td className="p-2">{row.email || "—"}</td><td className="p-2">{row.role}</td><td className={`p-2 ${row.issues.length ? "text-danger" : "text-success"}`}>{row.issues.length ? row.issues.join(", ") : "Ready"}</td></tr>)}</tbody></table></div>}
+          <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setImportDialogOpen(false)}>Cancel</Button><Button type="button" disabled={importSaving || !importPreview.some((row) => !row.issues.length)} onClick={() => void importStaff()}>{importSaving ? "Importing…" : `Import ${importPreview.filter((row) => !row.issues.length).length} valid row(s)`}</Button></div>
+        </div>
+      </Modal>
 
-      {!selectedGroup ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{groupCards.map((item)=><button key={item.value} type="button" onClick={()=>setSelectedGroup(item.value)} className="min-h-36 rounded-[8px] border bg-surface p-4 text-left transition hover:border-[var(--school-primary)] hover:shadow-sm"><BriefcaseBusiness size={20} className="text-[var(--school-primary)]" /><p className="mt-3 font-semibold">{item.label}</p><p className="mt-1 text-xs text-muted">{item.description}</p><p className="mt-4 text-2xl font-bold">{item.count}</p></button>)}<Link href="/admin/staff/assignments" className="min-h-36 rounded-[8px] border bg-surface p-4 text-left transition hover:border-[var(--school-primary)] hover:shadow-sm sm:col-span-2 xl:col-span-1"><UserRoundCog size={20} className="text-[var(--school-primary)]" /><p className="mt-3 font-semibold">Teacher assignments</p><p className="mt-1 text-xs text-muted">Class and subject access</p><p className="mt-4 text-2xl font-bold">{state.teacherAssignments.length}</p></Link></div> : <>
+      <>
+      <div className="mb-4 flex flex-wrap items-center gap-2">{groupCards.map((item) => <button key={item.value} type="button" onClick={() => setSelectedGroup(item.value)} aria-pressed={selectedGroup === item.value} className={`rounded-full border px-3 py-2 text-sm font-medium ${selectedGroup === item.value ? "border-[var(--school-primary)] bg-primary-light text-[var(--school-primary)]" : "bg-surface hover:bg-surface-muted"}`}>{item.label} <span className="ml-1 text-xs opacity-70">{item.count}</span></button>)}<Link href="/admin/staff/assignments" className="ml-auto flex items-center gap-1.5 text-sm font-semibold text-[var(--school-primary)] hover:underline"><UserRoundCog size={16} />Teacher assignments</Link></div>
 
       {formOpen && (
         <Card className="mb-5 p-5">
@@ -301,7 +312,7 @@ export function StaffHrScreen() {
         </div>
         <TablePagination label="Staff" total={pagination.total} page={pagination.page} pageCount={pagination.pageCount} pageSize={pagination.pageSize} start={pagination.start} onPageChange={pagination.setPage} onPageSizeChange={pagination.setPageSize} />
         {!rows.length && <EmptyState title="No staff found" description="Add staff members or clear the filters." />}
-      </section></>}
+      </section></>
     </div>
   );
 }

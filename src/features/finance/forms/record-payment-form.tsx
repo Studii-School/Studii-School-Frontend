@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CheckCircle2, ChevronLeft, ChevronRight, Printer, Upload } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { CheckCircle2, ChevronLeft, ChevronRight, Printer } from "lucide-react";
 import Link from "@/features/navigation-progress/navigation-progress-link";
 import { PersonNameLink } from "@/features/people/person-name-link";
 import { Button } from "@/components/ui/button";
@@ -21,7 +22,9 @@ const methods: PaymentMethod[] = ["Online card payment", "Bank transfer", "Cash"
 export function RecordPaymentForm({ initialInvoice, onClose }: { initialInvoice?: StudentInvoice; onClose?: () => void }) {
   const { allState, recordPayment } = useFinance();
   const { state } = useFinanceView();
-  const [step, setStep] = useState(initialInvoice ? 2 : 1);
+  const params = useSearchParams();
+  const [invoiceLaunch, setInvoiceLaunch] = useState(Boolean(initialInvoice));
+  const [step, setStep] = useState(initialInvoice ? 3 : 1);
   const [search, setSearch] = useState("");
   const [invoiceId, setInvoiceId] = useState(initialInvoice?.id ?? "");
   const invoice = allState.invoices.find((item) => item.id === invoiceId);
@@ -34,6 +37,9 @@ export function RecordPaymentForm({ initialInvoice, onClose }: { initialInvoice?
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
   const [receiptId, setReceiptId] = useState("");
+  const receiptParams = new URLSearchParams(params.toString());
+  receiptParams.delete("record");
+  receiptParams.set("receipt", receiptId);
   const matches = useMemo(
     () =>
       state.invoices.filter((item) => item.outstandingBalance > 0 && !["Cancelled", "Waived"].includes(item.status))
@@ -85,7 +91,7 @@ export function RecordPaymentForm({ initialInvoice, onClose }: { initialInvoice?
   return (
     <div>
       <div className="mb-5 flex flex-wrap gap-2">
-        {["Find account", "Select invoice", "Payment details", "Review", "Confirmation"].map((label, index) => (
+        {["Find account", "Select invoice", "Payment details", "Review", "Confirmation"].map((label, index) => ({ label, index })).filter(({ index }) => !invoiceLaunch || index >= 2).map(({ label, index }) => (
           <span key={label} className={`rounded-full px-3 py-1 text-xs font-medium ${step === index + 1 ? "bg-[var(--school-primary)] text-[var(--school-primary-foreground)]" : "bg-surface-muted text-muted"}`}>
             {index + 1}. {label}
           </span>
@@ -114,6 +120,7 @@ export function RecordPaymentForm({ initialInvoice, onClose }: { initialInvoice?
       )}
       {step === 3 && (
         <div className="grid gap-4 sm:grid-cols-2">
+          {invoice && <div className="rounded-xl border bg-surface-muted p-3 text-sm sm:col-span-2"><b>{invoice.student}</b> · {invoice.invoiceNumber} · Balance {formatNaira(invoice.outstandingBalance)}</div>}
           <label className="text-sm font-medium">Amount paid<MoneyInput className="mt-2" min="1" value={amount} onValueChange={setAmount} /></label>
           <label className="text-sm font-medium">Payment date<Input className="mt-2" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
           <div className="text-sm font-medium">Payment method<Select className="mt-2" label="Payment method" value={method} onChange={(value) => setMethod(value as PaymentMethod)} options={methods.map((value) => ({ value, label: value }))}/></div>
@@ -121,7 +128,7 @@ export function RecordPaymentForm({ initialInvoice, onClose }: { initialInvoice?
           <label className="text-sm font-medium">Transaction reference<Input className="mt-2" value={reference} onChange={(event) => setReference(event.target.value.toUpperCase())} placeholder="GF-TRF-2026-00422" /></label>
           <label className="text-sm font-medium">Payer name<Input className="mt-2" value={payer} onChange={(event) => setPayer(event.target.value)} /></label>
           <label className="text-sm font-medium sm:col-span-2">Notes<Input className="mt-2" value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
-          <label className="flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-[10px] border text-sm font-medium sm:col-span-2"><Upload size={16} />Upload proof placeholder<input className="sr-only" type="file" /></label>
+          <p className="text-xs text-muted sm:col-span-2">Payment proof attachments are unavailable in this workspace. Keep the transaction reference for reconciliation.</p>
         </div>
       )}
       {step === 4 && invoice && (
@@ -138,10 +145,10 @@ export function RecordPaymentForm({ initialInvoice, onClose }: { initialInvoice?
           <h3 className="mt-3 text-xl font-bold">Payment successful</h3>
           <p className="mt-1 text-sm text-muted">The invoice, receipt and dashboards have been updated.</p>
           <p className="mt-4 text-sm font-semibold">Receipt created - {receiptId}</p>
-          <div className="mt-5 flex flex-wrap justify-center gap-2"><Button type="button" variant="outline" onClick={() => window.print()}><Printer size={16} />Print receipt</Button><Link href={`/admin/finance/receipts?receipt=${receiptId}`}><Button type="button">View receipt</Button></Link><Button type="button" variant="outline" onClick={() => { setStep(1); setInvoiceId(""); setReference(""); }}>Record another</Button></div>
+          <div className="mt-5 flex flex-wrap justify-center gap-2"><Button type="button" variant="outline" onClick={() => window.print()}><Printer size={16} />Print receipt</Button><Link href={`/admin/finance/receipts?${receiptParams}`}><Button type="button">View receipt</Button></Link><Button type="button" variant="outline" onClick={() => { setInvoiceLaunch(false); setStep(1); setInvoiceId(""); setReference(""); }}>Record another</Button></div>
         </div>
       )}
-      {step < 5 && <div className="mt-6 flex justify-between border-t pt-4"><Button type="button" variant="outline" disabled={step === 1} onClick={() => setStep((value) => Math.max(1, value - 1))}><ChevronLeft size={16} />Back</Button>{step === 4 ? <Button type="button" onClick={() => void submit()}>Confirm payment<CheckCircle2 size={16} /></Button> : <Button type="button" onClick={next}>Continue<ChevronRight size={16} /></Button>}</div>}
+      {step < 5 && <div className="mt-6 flex justify-between border-t pt-4"><Button type="button" variant="outline" disabled={step === (invoiceLaunch ? 3 : 1)} onClick={() => setStep((value) => Math.max(invoiceLaunch ? 3 : 1, value - 1))}><ChevronLeft size={16} />Back</Button>{step === 4 ? <Button type="button" onClick={() => void submit()}>Confirm payment<CheckCircle2 size={16} /></Button> : <Button type="button" onClick={next}>Continue<ChevronRight size={16} /></Button>}</div>}
       {onClose && step === 5 && <button onClick={onClose} className="mt-4 text-sm text-muted">Close</button>}
     </div>
   );

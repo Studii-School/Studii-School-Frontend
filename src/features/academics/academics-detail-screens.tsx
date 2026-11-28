@@ -2,8 +2,7 @@
 
 import Link from "@/features/navigation-progress/navigation-progress-link";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { ProfileImageField } from "@/components/shared/profile-image-field";
 import { SectionCard } from "@/components/dashboard/section-card";
@@ -145,9 +144,8 @@ export function AdminClassDetailScreen({ classId }: { classId: string }) {
 }
 
 export function AdminTeacherDetailScreen({ teacherId }: { teacherId: string }) {
-  const { state, isLoading, removeTeacherAssignment, removeStaff, setStaffStatus } = useAcademics();
+  const { state, isLoading, removeTeacherAssignment, setStaffStatus } = useAcademics();
   const { confirm, toast } = useActionFeedback();
-  const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [timetableOpen, setTimetableOpen] = useState(false);
   const [tab, setTab] = useState<"Overview" | "Assignments" | "Account">("Overview");
@@ -221,26 +219,12 @@ export function AdminTeacherDetailScreen({ teacherId }: { teacherId: string }) {
       },
     });
   };
-  const deleteTeacher = () => {
-    const label = staff.isTeachingStaff ? "teacher" : "staff member";
-    confirm({
-      title: `Delete ${label}?`,
-      description: `${staff.fullName} will be removed from active staff and moved to Trash for 3 months.`,
-      confirmLabel: `Delete ${staff.isTeachingStaff ? "teacher" : "staff"}`,
-      destructive: true,
-      onConfirm: async () => {
-        await removeStaff(staff.userId);
-        toast("Staff member moved to Trash.", "success");
-        router.push("/admin/staff");
-      },
-    });
-  };
   const changeStatus = (nextStatus: "ACTIVE" | "SUSPENDED") => {
     if (nextStatus === staff.status) return;
     confirm({
-      title: `${nextStatus === "ACTIVE" ? "Reactivate" : "Suspend"} ${staff.fullName}?`,
-      description: nextStatus === "ACTIVE" ? "This staff member will regain access." : "This staff member will lose access until reactivated.",
-      confirmLabel: nextStatus === "ACTIVE" ? "Reactivate staff" : "Suspend staff",
+      title: `${nextStatus === "ACTIVE" ? "Restore" : "Suspend"} portal access for ${staff.fullName}?`,
+      description: nextStatus === "ACTIVE" ? "This staff member will regain portal access." : "This pauses portal access. It does not record an employment departure.",
+      confirmLabel: nextStatus === "ACTIVE" ? "Restore portal access" : "Suspend portal access",
       destructive: nextStatus === "SUSPENDED",
       onConfirm: async () => {
         await setStaffStatus(staff.userId, nextStatus);
@@ -277,17 +261,6 @@ export function AdminTeacherDetailScreen({ teacherId }: { teacherId: string }) {
               {staff.jobTitle} &middot; {staff.department ?? "No department"} &middot; {staff.email}
             </p>
           </div>
-          <Select
-            className="w-full sm:max-w-52"
-            label="More staff actions"
-            value=""
-            onChange={(value) => changeStatus(value as "ACTIVE" | "SUSPENDED")}
-            placeholder="More Actions"
-            options={[
-              { value: "ACTIVE", label: "Mark Active", disabled: staff.status === "ACTIVE" },
-              { value: "SUSPENDED", label: "Suspend Staff", disabled: staff.status === "SUSPENDED" },
-            ]}
-          />
         </div>
       </Card>
 
@@ -318,7 +291,7 @@ export function AdminTeacherDetailScreen({ teacherId }: { teacherId: string }) {
                 ["Staff ID", staff.employeeNumber ?? staff.staffId ?? "Not provided"],
                 ["Email", staff.email],
                 ["Phone", staff.phone ?? "Not provided"],
-                ["Monthly salary", typeof staff.salaryAmount === "number" ? formatNaira(staff.salaryAmount) : "Not provided"],
+                ["Base monthly salary", typeof staff.salaryAmount === "number" ? formatNaira(staff.salaryAmount) : "Not provided"],
                 ["Gender", staff.gender ?? "Not provided"],
                 ["Date of birth", displayDate(staff.dateOfBirth)],
                 ["Department", staff.department ?? "Not provided"],
@@ -394,19 +367,20 @@ export function AdminTeacherDetailScreen({ teacherId }: { teacherId: string }) {
       </>}
 
       {tab === "Account" && <div className="grid gap-5 lg:grid-cols-2">
-        <SectionCard title="Account">
+        <SectionCard title="Account" description="Portal access is separate from employment and payroll records.">
           <div className="space-y-5 p-5">
             <StaffPhotoEditor staffId={staff.id} name={staff.fullName} initialValue={staff.photoUrl} />
             <DetailGrid rows={[
-              ["Account status", staff.status],
+              ["Portal access", staff.status === "SUSPENDED" ? "Suspended" : staff.status === "ACTIVE" ? "Active" : "Inactive"],
               ["Job title", staff.jobTitle],
               ["Last updated", displayDate(staff.updatedAt)],
             ]} />
-            <Button variant="outline" onClick={() => changeStatus(staff.status === "SUSPENDED" ? "ACTIVE" : "SUSPENDED")}>{staff.status === "SUSPENDED" ? "Reactivate staff" : "Suspend staff"}</Button>
+            <p className="text-xs text-muted">Invitation and activation dates are not supplied by the staff account API.</p>
+            <Button variant="outline" onClick={() => changeStatus(staff.status === "SUSPENDED" ? "ACTIVE" : "SUSPENDED")}>{staff.status === "SUSPENDED" ? "Restore portal access" : "Suspend portal access"}</Button>
           </div>
         </SectionCard>
-        <SectionCard title="Remove staff member" description="Move this staff member to Trash for 3 months.">
-          <div className="p-5"><Button variant="danger" onClick={deleteTeacher}><Trash2 size={15} />Delete {staff.isTeachingStaff ? "teacher" : "staff"}</Button></div>
+        <SectionCard title="Staff departures" description="Keep payroll and teaching history when someone leaves.">
+          <p className="p-5 text-sm text-muted">This workspace has no staff archive or offboarding API. Suspending portal access above pauses sign-in; it does not change employment status. Ask your platform administrator to complete a departure until a history-preserving archive action is available.</p>
         </SectionCard>
       </div>}
 
@@ -519,7 +493,7 @@ function StaffDetailEditForm({ staff, onSaved }: { staff: StaffMember; onSaved: 
         <label className="text-sm font-medium">Full name<Input className="mt-2" value={form.name} onChange={(event) => patch("name", event.target.value)} /></label>
         <label className="text-sm font-medium">Email<Input className="mt-2" type="email" value={form.email} onChange={(event) => patch("email", event.target.value)} /></label>
         <label className="text-sm font-medium">Staff ID<Input className="mt-2" value={form.employeeNumber ?? ""} onChange={(event) => patch("employeeNumber", event.target.value)} /></label>
-        <label className="text-sm font-medium">Monthly salary<MoneyInput className="mt-2" min="0" value={form.salaryAmount ?? 0} onValueChange={(value) => patch("salaryAmount", value || undefined)} /></label>
+        <label className="text-sm font-medium">Base monthly salary<MoneyInput className="mt-2" min="0" value={form.salaryAmount ?? 0} onValueChange={(value) => patch("salaryAmount", value || undefined)} /></label>
         <label className="text-sm font-medium">Role<Select className="mt-2" searchable label="Role" value={form.jobTitle} onChange={(value) => patch("jobTitle", value)} options={roleOptions} /></label>
         <label className="text-sm font-medium">Custom role name<Input className="mt-2" value={form.jobTitle} onChange={(event) => patch("jobTitle", event.target.value)} /></label>
         <label className="text-sm font-medium">Department<Input className="mt-2" value={form.department ?? ""} onChange={(event) => patch("department", event.target.value)} /></label>

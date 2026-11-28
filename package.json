@@ -2,11 +2,14 @@
   "name": "studii-school",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "dev": "next dev -p 5173",
     "build": "next build",
     "start": "next start",
-    "test": "node --experimental-strip-types --test tests/academic-context.test.ts tests/academic-period-save.test.mjs tests/admin-password-verification.test.mjs tests/date-format.test.ts",
+    "test": "node --experimental-strip-types --test tests/academic-context.test.ts tests/academic-period-save.test.mjs tests/admin-password-verification.test.mjs tests/date-format.test.ts tests/student-form-rules.test.ts",
     "lint": "eslint"
   },
   "dependencies": {

@@ -23,13 +23,6 @@ export type SchoolFormState = {
   address: string;
 };
 
-export type SchoolAdminFormState = {
-  schoolId: string;
-  name: string;
-  email: string;
-  password: string;
-};
-
 export type DemoRequestRecord = {
   id: string;
   schoolName: string;
@@ -50,6 +43,7 @@ export function schoolKey(school: SchoolRecord) {
 
 export function schoolStatus(status?: string) {
   const value = status?.trim().toUpperCase();
+  if (value === "UNDER_REVIEW" || value === "PENDING_REVIEW") return "review";
   if (value === "ACTIVE") return "active";
   if (value === "SUSPENDED" || value === "INACTIVE") return "suspended";
   return "other";

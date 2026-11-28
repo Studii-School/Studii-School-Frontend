@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://studiischool-api.onrender.com";
 
 export async function POST(request: Request) {
   const authorization = request.headers.get("authorization");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, ArrowRight, Check, FileCheck2, HeartPulse, School, Trash2, Upload, UserRound, UsersRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -19,6 +19,8 @@ import type {
 } from "@/features/academics/academics.types";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
+import Link from "@/features/navigation-progress/navigation-progress-link";
+import { availableSchoolLevels, preferredSchoolLevel, studentRequiredIssues } from "./student-form-rules";
 
 const steps = [
   "Student",
@@ -29,7 +31,8 @@ const steps = [
   "Review",
 ];
 
-type FormState = StudentInput & {
+type FormState = Omit<StudentInput, "schoolLevel"> & {
+  schoolLevel: SchoolLevel | "";
   guardianMode: "existing" | "new";
   existingGuardianId: string;
   selectedGuardianIds: string[];
@@ -41,7 +44,7 @@ type FormState = StudentInput & {
   guardianEmergency: boolean;
 };
 
-const blankForm = (level: SchoolLevel): FormState => ({
+const blankForm = (level: SchoolLevel | ""): FormState => ({
   admissionNumber: "",
   firstName: "",
   middleName: "",
@@ -89,6 +92,7 @@ export function StudentFormPage({
 }) {
   const {
     state,
+    isLoading: academicsLoading,
     createGuardian,
     updateGuardian,
     createStudent,
@@ -104,8 +108,11 @@ export function StudentFormPage({
   const existingGuardian = state.guardians.find((item) =>
     existing?.guardianIds.includes(item.id),
   );
+  const availableLevels = availableSchoolLevels(state.classes, settings.schoolLevels);
+  const defaultLevel = preferredSchoolLevel(availableLevels, settings.schoolLevels);
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
+  const schoolLevelTouched = useRef(false);
   const [documents, setDocuments] = useState<
     Array<{ name: string; type: string; dataUrl: string }>
   >([]);
@@ -124,8 +131,19 @@ export function StudentFormPage({
           guardianPrimary: existingGuardian?.isPrimaryContact ?? true,
           guardianEmergency: existingGuardian?.isEmergencyContact ?? true,
         }
-      : blankForm(settings.schoolLevels[0] ?? "PRIMARY"),
+      : blankForm(defaultLevel),
   );
+
+  useEffect(() => {
+    if (existing || academicsLoading || schoolLevelTouched.current) return;
+    void Promise.resolve().then(() => setForm((current) => current.classId || schoolLevelTouched.current ? current : { ...current, schoolLevel: preferredSchoolLevel(availableSchoolLevels(state.classes, settings.schoolLevels), settings.schoolLevels) }));
+  }, [academicsLoading, existing, settings.schoolLevels, state.classes]);
+
+  useEffect(() => {
+    if (academicsLoading || !form.classId) return;
+    const match = state.classes.some((item) => item.id === form.classId && item.status === "ACTIVE" && item.level === form.schoolLevel);
+    if (!match) void Promise.resolve().then(() => setForm((current) => current.classId === form.classId ? { ...current, classId: "" } : current));
+  }, [academicsLoading, form.classId, form.schoolLevel, state.classes]);
 
   const patch = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
@@ -143,12 +161,8 @@ export function StudentFormPage({
   const studentName =
     [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ") ||
     "Not provided";
-  const completion = [
-    Boolean(form.firstName.trim() && form.lastName.trim()),
-    Boolean(form.classId),
-    form.guardianMode === "existing" ? Boolean(form.selectedGuardianIds.length) : Boolean(form.guardianName.trim() && form.guardianPhone.trim()),
-    Boolean(form.emergencyContactName?.trim() || form.medicalNotes?.trim() || documents.length),
-  ].filter(Boolean).length;
+  const requiredIssues = studentRequiredIssues(form, classes, state.guardians);
+  const completion = requiredIssues.filter((issues) => issues.length === 0).length;
   const newGuardianDetails = [
     ["Full name", form.guardianName],
     ["Relationship", form.guardianRelationship],
@@ -160,46 +174,9 @@ export function StudentFormPage({
   ] as const;
 
   const validateStep = () => {
-    if (
-      step === 0 &&
-      (!form.firstName.trim() ||
-        !form.lastName.trim() ||
-        (form.dateOfBirth && Number.isNaN(Date.parse(form.dateOfBirth))))
-    ) {
-      toast("Enter the required personal details.", "error");
-      return false;
-    }
-    if (step === 1 && !form.classId) {
-      toast("Select a class.", "error");
-      return false;
-    }
-    if (
-      step === 2 &&
-      form.guardianMode === "existing" &&
-      (!form.selectedGuardianIds.length || form.selectedGuardianIds.length > 2)
-    ) {
-      toast("Select one or two existing parents.", "error");
-      return false;
-    }
-    if (
-      step === 2 &&
-      form.guardianMode === "new" &&
-      form.selectedGuardianIds.length >= 2
-    ) {
-      toast("A student can have a maximum of two parents.", "error");
-      return false;
-    }
-    if (
-      step === 2 &&
-      form.guardianMode === "new" &&
-      (!form.guardianName.trim() ||
-        !form.guardianPhone.trim() ||
-        !form.guardianEmail?.trim())
-    ) {
-      toast("Enter the parent name, phone number and email.", "error");
-      return false;
-    }
-    return true;
+    const issue = requiredIssues[step]?.[0];
+    if (issue) toast(issue, "error");
+    return !issue;
   };
 
   const next = () => {
@@ -243,6 +220,12 @@ export function StudentFormPage({
   };
 
   const save = async () => {
+    const incomplete = requiredIssues.findIndex((issues) => issues.length > 0);
+    if (incomplete >= 0) {
+      setStep(incomplete);
+      toast(requiredIssues[incomplete][0], "error");
+      return;
+    }
     setSaving(true);
     try {
       let guardian: Guardian | undefined;
@@ -294,7 +277,7 @@ export function StudentFormPage({
         medicalNotes: form.medicalNotes || undefined,
         emergencyContactName: form.emergencyContactName || undefined,
         emergencyContactPhone: form.emergencyContactPhone || undefined,
-        schoolLevel: form.schoolLevel,
+        schoolLevel: form.schoolLevel as SchoolLevel,
         classId: form.classId,
         parentIds: guardianIds,
         guardianIds,
@@ -363,16 +346,16 @@ export function StudentFormPage({
       <Card className={variant === "modal" ? "mb-4 overflow-hidden" : "sticky top-16 z-10 mb-5 overflow-hidden shadow-sm"}>
         <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_170px]">
           <nav aria-label="Student form sections" className="grid min-w-0 grid-cols-3 gap-2 p-3 lg:grid-cols-6">
-            <ProgressTile icon={<UserRound size={16} />} tone="primary" label="Name" done={Boolean(form.firstName.trim() && form.lastName.trim())} status="Required" active={step === 0} onClick={() => setStep(0)} />
-            <ProgressTile icon={<School size={16} />} tone="secondary" label="Class" done={Boolean(form.classId)} status="Required" active={step === 1} onClick={() => setStep(1)} />
-            <ProgressTile icon={<UsersRound size={16} />} tone="accent" label="Parent" done={form.guardianMode === "existing" ? Boolean(form.selectedGuardianIds.length) : Boolean(form.guardianName.trim() && form.guardianPhone.trim())} status="Required" active={step === 2} onClick={() => setStep(2)} />
+            <ProgressTile icon={<UserRound size={16} />} tone="primary" label="Name" done={!requiredIssues[0].length} status="Required" active={step === 0} onClick={() => setStep(0)} />
+            <ProgressTile icon={<School size={16} />} tone="secondary" label="Class" done={!requiredIssues[1].length} status="Required" active={step === 1} onClick={() => setStep(1)} />
+            <ProgressTile icon={<UsersRound size={16} />} tone="accent" label="Parent" done={!requiredIssues[2].length} status="Required" active={step === 2} onClick={() => setStep(2)} />
             <ProgressTile icon={<HeartPulse size={16} />} tone="secondary" label="Care notes" done={Boolean(form.emergencyContactName?.trim() || form.medicalNotes?.trim() || documents.length)} status="Optional" active={step === 3} onClick={() => setStep(3)} />
             <ProgressTile icon={<Upload size={16} />} tone="accent" label="Files" done={Boolean(documents.length)} status="Optional" active={step === 4} onClick={() => setStep(4)} />
             <ProgressTile icon={<FileCheck2 size={16} />} tone="primary" label="Review" done={false} status="Summary" active={step === 5} onClick={() => setStep(5)} />
           </nav>
           <div className="min-w-0 border-t bg-surface-muted p-3 lg:border-l lg:border-t-0">
             <p className="text-xs font-semibold uppercase text-muted">Record readiness</p>
-            <p className="mt-1 text-2xl font-bold">{completion}/4</p>
+            <p className="mt-1 text-2xl font-bold">{completion}/3</p>
             <p className="mt-1 truncate text-xs text-muted" title={selectedClass?.displayName ?? "Class not selected"}>{selectedClass?.displayName ?? "Class not selected"}</p>
           </div>
         </div>
@@ -443,6 +426,7 @@ export function StudentFormPage({
 
         {step === 1 && (
           <div className="grid gap-4 sm:grid-cols-2">
+            {!availableLevels.length && <p role="alert" className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm sm:col-span-2">There are no active classes for this school. <Link className="font-semibold text-primary underline" href="/admin/settings?section=classes">Open Settings → Classes</Link> to create or activate a class.</p>}
             <Field label="Admission number">
               <Input value={existing ? form.admissionNumber : "Auto-generated when saved"} disabled />
             </Field>
@@ -450,11 +434,12 @@ export function StudentFormPage({
               <Input type="date" value={form.admissionDate ?? ""} onChange={(event) => patch("admissionDate", event.target.value)} />
             </Field>
             <Field label="School type">
-              <Select label="School type" value={form.schoolLevel} onChange={(value) => { patch("schoolLevel", value as SchoolLevel); patch("classId", ""); }} options={settings.schoolLevels.map((value) => ({ value, label: value === "PRIMARY" ? "Primary School" : "Secondary School" }))} />
+              <Select label="School type" value={form.schoolLevel} onChange={(value) => { schoolLevelTouched.current = true; setForm((current) => ({ ...current, schoolLevel: value as SchoolLevel, classId: "" })); }} placeholder="Choose school type" options={availableLevels.map((value) => ({ value, label: value === "PRIMARY" ? "Primary School" : "Secondary School" }))} />
             </Field>
             <Field label="Class">
               <Select searchable label="Class" value={form.classId} onChange={(value) => patch("classId", value)} placeholder="Select class" options={classes.map((item) => ({ value: item.id, label: item.displayName }))} />
             </Field>
+            {availableLevels.length > 0 && form.schoolLevel && !classes.length && <p className="text-xs text-warning sm:col-span-2">No active classes for this school type. <Link className="font-semibold underline" href="/admin/settings?section=classes">Manage classes</Link>.</p>}
             <Field label="Student status">
               <Select label="Student status" value={form.status} onChange={(value) => patch("status", value as StudentStatus)} options={["ACTIVE", "INACTIVE", "GRADUATED", "WITHDRAWN", "SUSPENDED"].map((value) => ({ value, label: value }))} />
             </Field>
@@ -523,6 +508,7 @@ export function StudentFormPage({
 
         {step === 5 && (
           <div className="space-y-5">
+            {completion < 3 && <div role="alert" className="rounded-xl border border-warning/40 bg-warning/10 p-4 text-sm"><p className="font-semibold">Complete these required details before creating the record:</p><ul className="mt-2 space-y-1">{requiredIssues.flatMap((issues, index) => issues.map((issue) => <li key={`${index}-${issue}`}><button type="button" className="text-left text-primary underline" onClick={() => setStep(index)}>{steps[index]}: {issue}</button></li>))}</ul></div>}
             <div className="grid gap-4 lg:grid-cols-[180px_1fr]">
               <div className="flex min-h-44 items-center justify-center rounded-xl border bg-surface-muted p-3">
                 <img
@@ -647,7 +633,7 @@ export function StudentFormPage({
           {step < 5 ? (
             <Button type="button" onClick={next}>{step === 0 ? "Choose class" : step === 1 ? "Add parent" : step === 2 ? "Health details" : step === 3 ? "Attach files" : "Review record"} <ArrowRight size={15} /></Button>
           ) : (
-            <Button type="button" disabled={saving} onClick={() => void save()}><FileCheck2 size={15} />{saving ? "Saving student..." : existing ? "Save Changes" : "Create Student Record"}</Button>
+            <Button type="button" disabled={saving || completion < 3} onClick={() => void save()}><FileCheck2 size={15} />{saving ? "Saving student..." : existing ? "Save Changes" : "Create Student Record"}</Button>
           )}
         </div>
       </section>

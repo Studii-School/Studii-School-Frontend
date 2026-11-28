@@ -1,28 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Building2, ChevronRight, Plus, RefreshCw, ShieldCheck, Users } from "lucide-react";
+import Link from "next/link";
+import { Building2, ChevronRight, Mail, RefreshCw, ShieldCheck, Users } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { SearchInput } from "@/components/shared/search-input";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonStyles } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { SidePanel } from "@/components/ui/side-panel";
 import { TablePagination, usePaginatedRows } from "@/components/ui/table-pagination";
 import { isSuperAdminPreview } from "@/lib/super-admin-preview";
-import { createSchool, deleteSchool, getSchools, reactivateSchool, suspendSchool } from "./super-admin.api";
-import { SchoolDetailPanel, type SchoolPanelTab } from "./school-detail-panel";
-import { schoolKey, schoolStatus, statusLabel, type SchoolFormState, type SchoolRecord } from "./super-admin.types";
-
-const emptySchool: SchoolFormState = { name: "", code: "", email: "", phone: "", address: "" };
-type SchoolAction = { kind: "suspend" | "reactivate" | "delete"; school: SchoolRecord };
+import { getSchools, inviteSchool } from "./super-admin.api";
+import { schoolKey, schoolStatus, statusLabel, type SchoolRecord } from "./super-admin.types";
 
 function statusTone(status?: string) {
   const value = schoolStatus(status);
-  return value === "active" ? "success" : value === "suspended" ? "warning" : "neutral";
+  return value === "active" ? "success" : value === "suspended" || value === "review" ? "warning" : "neutral";
 }
 
 export function SchoolManagementScreen({ initialStatus = "" }: { initialStatus?: string }) {
@@ -32,12 +28,9 @@ export function SchoolManagementScreen({ initialStatus = "" }: { initialStatus?:
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState(initialStatus);
-  const [selectedId, setSelectedId] = useState("");
-  const [selectedTab, setSelectedTab] = useState<SchoolPanelTab>("overview");
-  const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState(emptySchool);
-  const [createError, setCreateError] = useState("");
-  const [action, setAction] = useState<SchoolAction | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteError, setInviteError] = useState("");
   const [pending, setPending] = useState(false);
   const preview = isSuperAdminPreview();
 
@@ -59,66 +52,32 @@ export function SchoolManagementScreen({ initialStatus = "" }: { initialStatus?:
     const text = [school.name, school.code, school.email, school.phone, school.status].join(" ").toLowerCase();
     return (!status || schoolStatus(school.status) === status) && text.includes(query.trim().toLowerCase());
   });
-  const selectedSchool = schools.find((school) => schoolKey(school) === selectedId) ?? null;
   const activeCount = schools.filter((school) => schoolStatus(school.status) === "active").length;
+  const reviewCount = schools.filter((school) => schoolStatus(school.status) === "review").length;
   const suspendedCount = schools.filter((school) => schoolStatus(school.status) === "suspended").length;
   const peopleCount = schools.reduce((total, school) => total + (school._count?.users ?? school.totalUsers ?? 0), 0);
   const pagination = usePaginatedRows(filtered, `${query}|${status}|${schools.length}`);
 
-  function openSchool(school: SchoolRecord, tab: SchoolPanelTab = "overview") {
-    setSelectedTab(tab);
-    setSelectedId(schoolKey(school));
-  }
+  const closeInvite = useCallback(() => setInviteOpen(false), []);
 
-  const closeSchool = useCallback(() => setSelectedId(""), []);
-  const closeCreate = useCallback(() => setCreateOpen(false), []);
-
-  async function submitSchool(event: React.FormEvent<HTMLFormElement>) {
+  async function submitInvitation(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (preview || pending) return;
-    const name = form.name.trim();
-    const code = form.code.trim().toUpperCase();
-    if (name.length < 2 || code.length < 2) {
-      setCreateError("School name and code must each have at least two characters.");
+    const email = inviteEmail.trim().toLowerCase();
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      setInviteError("Enter a valid school email address.");
       return;
     }
     setPending(true);
-    setCreateError("");
+    setInviteError("");
     setMessage("");
     try {
-      const created = await createSchool({ ...form, name, code, email: form.email.trim(), phone: form.phone.trim(), address: form.address.trim() });
-      setCreateOpen(false);
-      setForm(emptySchool);
-      setMessage("School workspace created.");
-      await loadSchools();
-      const createdId = schoolKey(created.school);
-      if (createdId) setSelectedId(createdId);
+      await inviteSchool(email);
+      setInviteOpen(false);
+      setInviteEmail("");
+      setMessage(`Invitation requested for ${email}. The school can open its email link to complete onboarding.`);
     } catch (caught) {
-      setCreateError(caught instanceof Error ? caught.message : "School could not be created.");
-    } finally {
-      setPending(false);
-    }
-  }
-
-  async function confirmAction() {
-    if (!action || preview || pending) return;
-    const id = schoolKey(action.school);
-    if (!id) return;
-    setPending(true);
-    setError("");
-    setMessage("");
-    try {
-      if (action.kind === "suspend") await suspendSchool(id);
-      else if (action.kind === "reactivate") await reactivateSchool(id);
-      else await deleteSchool(id);
-      const completed = action.kind;
-      setAction(null);
-      if (completed === "delete") closeSchool();
-      setMessage(completed === "delete" ? "School permanently deleted." : completed === "suspend" ? "School suspended." : "School reactivated.");
-      await loadSchools();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The action could not be completed.");
-      setAction(null);
+      setInviteError(caught instanceof Error ? caught.message : "The invitation could not be sent.");
     } finally {
       setPending(false);
     }
@@ -126,13 +85,14 @@ export function SchoolManagementScreen({ initialStatus = "" }: { initialStatus?:
 
   return (
     <>
-      <PageHeader title="Schools" description="Open a school to review its details, control features and manage administrators."
-        action={<div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={loading || pending} onClick={() => void loadSchools()}><RefreshCw size={16} />Refresh</Button><Button type="button" onClick={() => { setCreateError(""); setCreateOpen(true); }}><Plus size={16} />Create school</Button></div>} />
+      <PageHeader title="Schools" description="Invite schools, review their profiles, and manage existing workspaces."
+        action={<div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={loading || pending} onClick={() => void loadSchools()}><RefreshCw size={16} />Refresh</Button><Button type="button" onClick={() => { setInviteError(""); setInviteOpen(true); }}><Mail size={16} />Invite school</Button></div>} />
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {[
           { label: "Total schools", value: schools.length, icon: Building2, tone: "text-primary" },
           { label: "Active", value: activeCount, icon: ShieldCheck, tone: "text-success" },
+          { label: "Under review", value: reviewCount, icon: ShieldCheck, tone: "text-warning" },
           { label: "Suspended or inactive", value: suspendedCount, icon: Users, tone: "text-warning" },
           { label: "People across schools", value: peopleCount, icon: Users, tone: "text-muted" },
         ].map(({ label, value, icon: Icon, tone }) => (
@@ -151,12 +111,12 @@ export function SchoolManagementScreen({ initialStatus = "" }: { initialStatus?:
         <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-end">
           <div className="min-w-0 flex-1"><SearchInput value={query} onChange={setQuery} placeholder="Search by school, code or contact" /></div>
           <Select className="sm:w-52" label="Status" placeholder="All statuses" clearable value={status} onChange={setStatus}
-            options={[{ value: "active", label: "Active" }, { value: "suspended", label: "Suspended or inactive" }, { value: "other", label: "Other" }]} />
+            options={[{ value: "active", label: "Active" }, { value: "review", label: "Under review" }, { value: "suspended", label: "Suspended or inactive" }, { value: "other", label: "Other" }]} />
         </div>
         {error && <p role="alert" className="border-b bg-danger/10 px-4 py-3 text-sm text-danger">{error}</p>}
         {message && <p role="status" className="border-b bg-success/10 px-4 py-3 text-sm text-success">{message}</p>}
         {loading ? <p role="status" className="p-8 text-center text-sm text-muted">Loading schools…</p> : !filtered.length ? (
-          <div className="p-10 text-center"><Building2 className="mx-auto text-muted" size={28} /><p className="mt-3 font-medium">{schools.length ? "No schools match your filters" : "No schools yet"}</p><p className="mt-1 text-sm text-muted">{schools.length ? "Try another search or status." : "Create the first school workspace to get started."}</p></div>
+          <div className="p-10 text-center"><Building2 className="mx-auto text-muted" size={28} /><p className="mt-3 font-medium">{schools.length ? "No schools match your filters" : "No schools yet"}</p><p className="mt-1 text-sm text-muted">{schools.length ? "Try another search or status." : "Invite a school to begin onboarding."}</p></div>
         ) : (
           <>
             <div className="overflow-x-auto"><table className="w-full min-w-[650px] text-left text-sm">
@@ -164,11 +124,11 @@ export function SchoolManagementScreen({ initialStatus = "" }: { initialStatus?:
               <tbody className="divide-y">
                 {pagination.rows.map((school) => (
                   <tr key={schoolKey(school) || school.name} className="transition-colors hover:bg-surface-muted/40">
-                    <td className="px-4 py-4"><button type="button" className="text-left font-semibold text-foreground hover:text-primary hover:underline focus-visible:rounded focus-visible:outline-2 focus-visible:outline-primary" onClick={() => openSchool(school)}>{school.name || "Unnamed school"}</button><p className="mt-1 text-xs text-muted">{school.code || "No code"}</p></td>
+                    <td className="px-4 py-4"><Link href={`/super-admin/schools/${encodeURIComponent(schoolKey(school))}`} className="text-left font-semibold text-foreground hover:text-primary hover:underline focus-visible:rounded focus-visible:outline-2 focus-visible:outline-primary">{school.name || "Unnamed school"}</Link><p className="mt-1 text-xs text-muted">{school.code || "No code"}</p></td>
                     <td className="px-4 py-4"><p className="break-all">{school.email || "No email"}</p><p className="mt-1 text-xs text-muted">{school.phone || "No phone"}</p></td>
                     <td className="px-4 py-4 tabular-nums">{school._count?.users ?? school.totalUsers ?? "—"}</td>
                     <td className="px-4 py-4"><Badge tone={statusTone(school.status)}>{statusLabel(school.status)}</Badge></td>
-                    <td className="px-4 py-4 text-right"><Button type="button" variant="outline" className="min-h-9 px-3" onClick={() => openSchool(school)}>Manage <ChevronRight size={15} /></Button></td>
+                    <td className="px-4 py-4 text-right"><Link className={`${buttonStyles("outline")} min-h-9 px-3`} href={`/super-admin/schools/${encodeURIComponent(schoolKey(school))}`}>View school <ChevronRight size={15} /></Link></td>
                   </tr>
                 ))}
               </tbody>
@@ -179,28 +139,16 @@ export function SchoolManagementScreen({ initialStatus = "" }: { initialStatus?:
         )}
       </Card>
 
-      <SchoolDetailPanel school={selectedSchool} initialTab={selectedTab} preview={preview} pending={pending}
-        onClose={closeSchool} onChanged={() => void loadSchools()} onAction={(kind, school) => setAction({ kind, school })} />
-
-      <SidePanel open={createOpen} title="Create a school" description="Set up a workspace. You can add its administrator after creation." onClose={closeCreate} maxWidth="lg">
-        <form className="space-y-5" onSubmit={submitSchool}>
-          <p className="rounded-lg bg-surface-muted p-3 text-sm text-muted">The school code must be unique. Name and code can be changed later.</p>
-          {createError && <p role="alert" className="rounded-lg bg-danger/10 p-3 text-sm text-danger">{createError}</p>}
+      <SidePanel open={inviteOpen} title="Invite a school" description="Send a secure link so the school can set up its own profile." onClose={closeInvite} maxWidth="lg">
+        <form className="space-y-5" onSubmit={submitInvitation}>
+          {inviteError && <p role="alert" className="rounded-lg bg-danger/10 p-3 text-sm text-danger">{inviteError}</p>}
           <fieldset disabled={preview || pending} className="space-y-4">
-            <Field label="School name" required value={form.name} onChange={(value) => setForm({ ...form, name: value })} />
-            <Field label="School code" required value={form.code} onChange={(value) => setForm({ ...form, code: value })} />
-            <Field label="School email" type="email" value={form.email} onChange={(value) => setForm({ ...form, email: value })} />
-            <Field label="Phone" type="tel" value={form.phone} onChange={(value) => setForm({ ...form, phone: value })} />
-            <Field label="Address" value={form.address} onChange={(value) => setForm({ ...form, address: value })} />
-            <Button type="submit" disabled={pending}>{pending ? "Creating…" : "Create school"}</Button>
+            <Field label="School email" type="email" required value={inviteEmail} onChange={setInviteEmail} />
+            <Button type="submit" disabled={pending}>{pending ? "Sending…" : "Send invitation"}</Button>
           </fieldset>
         </form>
       </SidePanel>
 
-      {action && <ConfirmationDialog open title={`${statusLabel(action.kind)} school?`}
-        description={action.kind === "delete" ? `Permanently delete ${action.school.name ?? "this school"}? This cannot be undone.` : action.kind === "suspend" ? `Suspend ${action.school.name ?? "this school"}? Its users will be unable to sign in.` : `Reactivate ${action.school.name ?? "this school"} and restore access?`}
-        confirmLabel={action.kind === "delete" ? "Delete permanently" : statusLabel(action.kind)} destructive={action.kind !== "reactivate"}
-        isLoading={pending} onCancel={() => setAction(null)} onConfirm={() => void confirmAction()} />}
     </>
   );
 }

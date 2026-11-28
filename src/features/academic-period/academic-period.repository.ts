@@ -1,6 +1,7 @@
 import { apiRequest, readStoredToken } from "@/lib/api";
 import { readStoredUser } from "@/lib/auth";
 import { academicTermNameFromLabel, type AcademicSessionRecord, type AcademicTermRecord, type HistoricalSessionInput, type UpsertAcademicTermInput } from "./academic-period.types";
+import { academicPeriodIssues } from "./academic-period-validation";
 
 type ListResponse = AcademicSessionRecord[] | Record<string, unknown>;
 type TermListResponse = AcademicTermRecord[] | Record<string, unknown>;
@@ -227,6 +228,8 @@ export const academicPeriodRepository = {
     if (input.termEndDate <= input.termStartDate) {
       throw new Error("Term end date must be after the start date.");
     }
+    const issue = academicPeriodIssues(input.sessionName, input.termStartDate, input.termEndDate)[0];
+    if (issue) throw new Error(issue.message);
     if (!readStoredToken()) {
       const local = upsertLocalTerm(input);
       return { session: local.session, term: local.term };

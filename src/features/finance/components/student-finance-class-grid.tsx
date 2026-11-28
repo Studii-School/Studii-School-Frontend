@@ -41,7 +41,7 @@ export function StudentFinanceClassGrid({ baseHref = "/admin/finance/payments" }
         const classHref = withClassScope(baseHref, schoolClass.id);
 
         return (
-          <Link key={schoolClass.id} href={selectedTermOnly ? `${classHref}&financePeriod=term` : classHref} className="block">
+          <Link key={schoolClass.id} href={selectedTermOnly ? classHref : `${classHref}&financePeriod=all`} className="block">
             <Card className="h-full p-5 transition hover:border-[var(--school-primary)] hover:shadow-sm">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">

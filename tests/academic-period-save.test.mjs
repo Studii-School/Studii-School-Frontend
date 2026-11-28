@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
+import { academicPeriodIssues } from "../src/features/academic-period/academic-period-validation.ts";
 
 const sessionId = "11111111-1111-4111-8111-111111111111";
 const termId = "22222222-2222-4222-8222-222222222222";
@@ -55,6 +56,7 @@ function repositoryWithBackend({ applyDatePatch = true, applyActivation = true }
     if (id === "./academic-period.types") return {
       academicTermNameFromLabel: (value) => value === "SECOND" ? "SECOND" : value === "THIRD" ? "THIRD" : "FIRST",
     };
+    if (id === "./academic-period-validation") return { academicPeriodIssues };
     throw new Error(`Unexpected module: ${id}`);
   };
   new Function("require", "module", "exports", compiled)(requireStub, moduleObject, moduleObject.exports);
@@ -70,6 +72,11 @@ const input = {
   termEndDate: "2026-12-15",
   makeCurrent: true,
 };
+
+test("academic period validation catches invalid dates and reversed term dates", () => {
+  assert.match(academicPeriodIssues("2026/2027", "2026-02-30", "2026-12-15")[0].message, /valid term start date/);
+  assert.match(academicPeriodIssues("2026/2027", "2026-12-15", "2026-09-10")[0].message, /after the start date/);
+});
 
 test("saving an existing term updates backend dates before activating it", async () => {
   const { repository, calls } = repositoryWithBackend();
@@ -110,4 +117,10 @@ test("saving a later term expands an existing session to include its dates", asy
     startDate: "2026-01-01",
     endDate: "2027-12-31",
   });
+});
+
+test("term dates outside the selected academic session are rejected before saving", async () => {
+  const { repository, calls } = repositoryWithBackend();
+  await assert.rejects(repository.upsertTerm({ ...input, sessionName: "2027/2028", termStartDate: "2026-08-27", termEndDate: "2026-08-29" }), /within 2027\/2028/);
+  assert.equal(calls.length, 0);
 });

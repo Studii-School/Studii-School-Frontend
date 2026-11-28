@@ -10,7 +10,7 @@ import { PasswordField } from "@/components/ui/password-field";
 import { buttonStyles } from "@/components/ui/button";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { login } from "@/lib/api";
-import { routeForRole } from "@/lib/auth";
+import { normaliseRole, routeForRole } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -27,7 +27,10 @@ export default function LoginPage() {
     try {
       const user = await login(email.trim().toLowerCase(), password);
       toast("Signed in successfully.", "success");
-      router.replace(routeForRole(user.role));
+      const next = new URLSearchParams(window.location.search).get("next");
+      router.replace(normaliseRole(user.role) === "Administrator" && next === "/school-onboarding"
+        ? next
+        : routeForRole(user.role));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to sign in.");
     } finally {

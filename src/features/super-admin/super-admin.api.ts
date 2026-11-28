@@ -2,7 +2,10 @@
 
 import { apiRequest } from "@/lib/api";
 import { isSuperAdminPreview } from "@/lib/super-admin-preview";
-import type { DemoRequestRecord, SchoolAdminFormState, SchoolFormState, SchoolRecord } from "./super-admin.types";
+import { schoolClassSummaries, type SchoolClassSummary } from "./school-class-summaries";
+import type { DemoRequestRecord, SchoolFormState, SchoolRecord } from "./super-admin.types";
+
+export type { SchoolClassSummary } from "./school-class-summaries";
 
 const previewSchools: SchoolRecord[] = [
   { id: "preview-school-1", name: "Sample Academy", code: "SAMPLE", email: "hello@sample.example", phone: "+234 800 000 0001", address: "12 Sample Road, Lagos", status: "ACTIVE", createdAt: "2026-08-12T10:00:00Z", _count: { users: 186 } },
@@ -45,6 +48,18 @@ export async function getSchool(schoolId: string) {
   return apiRequest<SchoolRecord>(`/schools/${encodeURIComponent(schoolId)}`);
 }
 
+export async function getSchoolClassSummaries(schoolId: string): Promise<SchoolClassSummary[]> {
+  if (isSuperAdminPreview()) {
+    return schoolId === "preview-school-1"
+      ? [
+          { id: "preview-class-1", name: "JSS 1 Gold", level: "SECONDARY", academicYear: "2026/2027", status: "ACTIVE", capacity: 35, studentCount: 28 },
+          { id: "preview-class-2", name: "JSS 2", level: "SECONDARY", academicYear: "2026/2027", status: "ACTIVE", capacity: 35, studentCount: 31 },
+        ]
+      : [];
+  }
+  return schoolClassSummaries(await apiRequest<unknown>("/classes"), schoolId);
+}
+
 export function updateSchool(schoolId: string, values: Partial<SchoolFormState>) {
   requireRealSession();
   return apiRequest<{ message: string; school: SchoolRecord }>(`/schools/${encodeURIComponent(schoolId)}`, {
@@ -53,18 +68,21 @@ export function updateSchool(schoolId: string, values: Partial<SchoolFormState>)
   });
 }
 
-export function createSchool(values: SchoolFormState) {
+export async function inviteSchool(email: string) {
   requireRealSession();
-  return apiRequest<{ message: string; school: SchoolRecord }>("/schools", {
+  const response = await apiRequest<{ invitationId?: string; email?: string }>("/schools/invitations", {
     method: "POST",
-    body: JSON.stringify({
-      name: values.name.trim(),
-      code: values.code.trim().toUpperCase(),
-      ...(values.email.trim() ? { email: values.email.trim().toLowerCase() } : {}),
-      ...(values.phone.trim() ? { phone: values.phone.trim() } : {}),
-      ...(values.address.trim() ? { address: values.address.trim() } : {}),
-    }),
+    body: JSON.stringify({ email: email.trim().toLowerCase() }),
   });
+  if (!response?.invitationId || response.email?.toLowerCase() !== email.trim().toLowerCase()) {
+    throw new Error("The invitation was not confirmed by the server. Please check its status before retrying.");
+  }
+  return response;
+}
+
+export function approveSchoolOnboarding(schoolId: string) {
+  requireRealSession();
+  return apiRequest<SchoolRecord | { school: SchoolRecord }>(`/schools/${encodeURIComponent(schoolId)}/onboarding/approve`, { method: "POST" });
 }
 
 export function suspendSchool(schoolId: string) {
@@ -80,14 +98,6 @@ export function reactivateSchool(schoolId: string) {
 export function deleteSchool(schoolId: string) {
   requireRealSession();
   return apiRequest<void>(`/schools/${schoolId}`, { method: "DELETE" });
-}
-
-export function createSchoolAdmin({ schoolId, ...values }: SchoolAdminFormState) {
-  requireRealSession();
-  return apiRequest(`/schools/${schoolId}/admins`, {
-    method: "POST",
-    body: JSON.stringify(values),
-  });
 }
 
 export async function getDemoRequests() {

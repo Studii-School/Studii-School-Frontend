@@ -8,11 +8,13 @@ import { buttonStyles } from "@/components/ui/button";
 import { useAcademicPeriod } from "@/features/academic-period/academic-period-context";
 import { useAcademics } from "@/features/academics/academics-context";
 import { useSchoolSettings } from "./school-settings-context";
+import { useSchoolUnderReview } from "@/features/school-review/school-review-context";
 
 export function SchoolSetup({ compact = false }: { compact?: boolean }) {
   const period = useAcademicPeriod();
   const academics = useAcademics();
   const { settings, isLoading: settingsLoading } = useSchoolSettings();
+  const underReview = useSchoolUnderReview();
   const activeSession = period.sessions.find((session) => session.status === "ACTIVE");
   const activeTerm = activeSession?.terms.find((term) => term.status === "ACTIVE");
   const hasPeriod = Boolean(activeSession && activeTerm);
@@ -25,7 +27,9 @@ export function SchoolSetup({ compact = false }: { compact?: boolean }) {
   const loading = period.isLoading || settingsLoading || (hasPeriod && academics.isLoading);
   const loadError = period.error || (viewingActivePeriod ? academics.error : undefined);
 
-  if (compact && (loading || loadError || (hasPeriod && (!viewingActivePeriod || (hasClasses && hasStudents))))) return null;
+  if (compact && (underReview || loading || loadError || (hasPeriod && (!viewingActivePeriod || (hasClasses && hasStudents))))) return null;
+
+  if (underReview) return <Card className="max-w-3xl p-5 sm:p-7"><h1 className="text-lg font-semibold">Your school profile is under review</h1><p className="mt-2 text-sm text-muted">You can edit your school details while you wait. Student and staff setup will become available after approval.</p><Link className={buttonStyles("outline") + " mt-4"} href="/admin/settings?section=profile">Edit school profile</Link></Card>;
 
   const nextAction = complete
     ? { href: "/admin/dashboard", label: "Go to dashboard" }

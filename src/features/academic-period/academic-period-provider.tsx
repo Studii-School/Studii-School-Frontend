@@ -18,6 +18,10 @@ function savedSelection() {
   catch { return {}; }
 }
 
+function persist(nextSessionId: string, nextTermId: string) {
+  localStorage.setItem(selectionKey(), JSON.stringify({ sessionId: nextSessionId, termId: nextTermId }));
+}
+
 export function AcademicPeriodProvider({ children }: { children: React.ReactNode }) {
   const { settings } = useSchoolSettings();
   const [sessions, setSessions] = useState<AcademicSessionRecord[]>([]);
@@ -65,12 +69,13 @@ export function AcademicPeriodProvider({ children }: { children: React.ReactNode
 
   const selectDefaults = useCallback((items: AcademicSessionRecord[]) => {
     const saved = savedSelection();
-    const session = items.find((item) => item.id === saved.sessionId)
+    const session = items.find((item) => item.status === "ACTIVE" && item.terms.some((term) => term.status === "ACTIVE"))
       ?? items.find((item) => item.status === "ACTIVE")
+      ?? items.find((item) => item.id === saved.sessionId)
       ?? items[0];
     const orderedTerms = [...(session?.terms ?? [])].sort((a, b) => a.startDate.localeCompare(b.startDate));
-    const term = orderedTerms.find((item) => item.id === saved.termId)
-      ?? orderedTerms.find((item) => item.status === "ACTIVE")
+    const term = orderedTerms.find((item) => item.status === "ACTIVE")
+      ?? orderedTerms.find((item) => item.id === saved.termId)
       ?? orderedTerms.at(-1);
     setSessionIdState(session?.id ?? "");
     setTermIdState(term?.id ?? "");
@@ -132,9 +137,6 @@ export function AcademicPeriodProvider({ children }: { children: React.ReactNode
     isCurrentPeriod: selectedSession?.status === "ACTIVE" && selectedTerm?.status === "ACTIVE",
   }), [isLoading, selectedSession, selectedTerm, settings.id]);
 
-  const persist = (nextSessionId: string, nextTermId: string) => {
-    localStorage.setItem(selectionKey(), JSON.stringify({ sessionId: nextSessionId, termId: nextTermId }));
-  };
   const setSessionId = (value: string) => {
     const session = sessions.find((item) => item.id === value);
     const ordered = [...(session?.terms ?? [])].sort((a, b) => a.startDate.localeCompare(b.startDate));

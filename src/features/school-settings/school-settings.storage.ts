@@ -145,10 +145,10 @@ function mergeAcademicSettings(settings: SchoolSettings, schoolId?: string) {
   const saved = readAcademicSettings(schoolId ?? settings.id);
   return {
     ...settings,
-    currentAcademicSession: saved.currentAcademicSession || settings.currentAcademicSession,
-    currentTerm: validOption(saved.currentTerm, validTerms, settings.currentTerm),
-    resumptionDate: saved.resumptionDate ?? settings.resumptionDate,
-    closingDate: saved.closingDate ?? settings.closingDate,
+    currentAcademicSession: settings.currentAcademicSession || saved.currentAcademicSession || "",
+    currentTerm: settings.currentAcademicSession ? settings.currentTerm : validOption(saved.currentTerm, validTerms, settings.currentTerm),
+    resumptionDate: settings.resumptionDate ?? saved.resumptionDate,
+    closingDate: settings.closingDate ?? saved.closingDate,
     historicalEditingEnabled: settings.historicalEditingEnabled ?? saved.historicalEditingEnabled ?? false,
   };
 }
@@ -248,6 +248,7 @@ export async function getSchoolSettings(schoolId?: string, user?: AuthUser | nul
     schoolId ?? getStoredSchoolId(user),
   );
   try {
+    if (schoolId) return settings;
     const active = await academicPeriodRepository.getActiveTerm();
     if (active) {
       const current = {

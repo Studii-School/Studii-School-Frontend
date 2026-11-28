@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { PasswordField } from "@/components/ui/password-field";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { firstTimePassword } from "@/lib/api";
-import { routeForRole } from "@/lib/auth";
+import { normaliseRole, routeForRole } from "@/lib/auth";
 
 export default function FirstTimeLoginPage() {
   const router = useRouter();
@@ -30,7 +30,10 @@ export default function FirstTimeLoginPage() {
     try {
       const user = await firstTimePassword(email, password);
       toast("Password created successfully.", "success");
-      router.replace(routeForRole(user.role));
+      const next = new URLSearchParams(window.location.search).get("next");
+      router.replace(normaliseRole(user.role) === "Administrator" && next === "/school-onboarding"
+        ? next
+        : routeForRole(user.role));
     } catch (err) {
       toast(err instanceof Error ? err.message : "Password could not be created.", "error");
     } finally {

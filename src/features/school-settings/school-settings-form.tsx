@@ -18,6 +18,7 @@ import { useAcademics } from "@/features/academics/academics-context";
 import { useActionFeedback } from "@/features/action-feedback/action-feedback-context";
 import { useAcademicPeriod } from "@/features/academic-period/academic-period-context";
 import { academicTermLabel, academicTermNameFromLabel } from "@/features/academic-period/academic-period.types";
+import { academicPeriodIssues, sessionDateBounds } from "@/features/academic-period/academic-period-validation";
 import { isValidHexColor, resolveColor } from "@/lib/color-utils";
 import { toLocalDateKey } from "@/lib/date-utils";
 import { verifyAdminPassword } from "@/lib/api";
@@ -305,6 +306,9 @@ export function SchoolSettingsForm({ initialTab = "Profile" }: { initialTab?: Se
   const [passwordError, setPasswordError] = useState("");
   const [isVerifyingPassword, setIsVerifyingPassword] = useState(false);
   const classesSettingsRef = useRef<ClassesSettingsHandle>(null);
+  const currentPeriodIssues = settings.currentAcademicSession
+    ? academicPeriodIssues(settings.currentAcademicSession, settings.resumptionDate, settings.closingDate)
+    : [];
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -382,9 +386,7 @@ export function SchoolSettingsForm({ initialTab = "Profile" }: { initialTab?: Se
     ) {
       next.secondaryPhone = "Enter a valid phone number.";
     }
-    if (!/^\d{4}\/\d{4}$/.test(settings.currentAcademicSession ?? "")) {
-      next.session = "Use the format 2026/2027.";
-    }
+    for (const issue of academicPeriodIssues(settings.currentAcademicSession, settings.resumptionDate, settings.closingDate)) next[issue.field] = issue.message;
     if (!settings.schoolLevels?.length) {
       next.schoolLevels = "Select at least one school level.";
     }
@@ -397,13 +399,7 @@ export function SchoolSettingsForm({ initialTab = "Profile" }: { initialTab?: Se
         next[key] = "Use a six-digit hex colour such as #075985.";
       }
     }
-    if (
-      settings.resumptionDate &&
-      settings.closingDate &&
-      settings.closingDate <= settings.resumptionDate
-    ) {
-      next.closingDate = "Term end date must be after the start date.";
-    } else if (settings.resumptionDate && !settings.closingDate) {
+    if (settings.resumptionDate && !settings.closingDate) {
       next.closingDate = "Term end date is required.";
     }
     setErrors(next);
@@ -451,17 +447,18 @@ export function SchoolSettingsForm({ initialTab = "Profile" }: { initialTab?: Se
   };
 
   const sessionFallbackDates = () => {
-    const match = settings.currentAcademicSession.match(/^(\d{4})\/(\d{4})$/);
+    const bounds = sessionDateBounds(settings.currentAcademicSession);
     return {
-      sessionStartDate: match ? `${match[1]}-01-01` : settings.resumptionDate || "",
-      sessionEndDate: match ? `${match[2]}-12-31` : settings.closingDate || "",
+      sessionStartDate: bounds?.start ?? settings.resumptionDate ?? "",
+      sessionEndDate: bounds?.end ?? settings.closingDate ?? "",
     };
   };
 
   const saveCurrentTerm = async () => {
-    if (!/^\d{4}\/\d{4}$/.test(settings.currentAcademicSession ?? "")) {
-      setErrors((current) => ({ ...current, session: "Use the format 2026/2027." }));
-      toast("Enter the academic session in 2026/2027 format.", "error");
+    const periodIssues = academicPeriodIssues(settings.currentAcademicSession, settings.resumptionDate, settings.closingDate);
+    if (periodIssues.length) {
+      setErrors((current) => ({ ...current, ...Object.fromEntries(periodIssues.map((issue) => [issue.field, issue.message])) }));
+      toast(periodIssues[0].message, "error");
       return;
     }
     if (!settings.resumptionDate) {
@@ -472,11 +469,6 @@ export function SchoolSettingsForm({ initialTab = "Profile" }: { initialTab?: Se
     if (!settings.closingDate) {
       setErrors((current) => ({ ...current, closingDate: "Term end date is required." }));
       toast("Enter the term end date first.", "error");
-      return;
-    }
-    if (settings.closingDate <= settings.resumptionDate) {
-      setErrors((current) => ({ ...current, closingDate: "Term end date must be after the start date." }));
-      toast("Term end date must be after the start date.", "error");
       return;
     }
     try {
@@ -508,6 +500,17 @@ export function SchoolSettingsForm({ initialTab = "Profile" }: { initialTab?: Se
 
   const markTermEndedToday = async () => {
     const endDate = toLocalDateKey(new Date());
+    if (!settings.resumptionDate) {
+      setErrors((current) => ({ ...current, resumptionDate: "Set the term start date before ending this term." }));
+      toast("Set the term start date before ending this term.", "error");
+      return;
+    }
+    const issue = academicPeriodIssues(settings.currentAcademicSession, settings.resumptionDate, endDate)[0];
+    if (issue) {
+      setErrors((current) => ({ ...current, [issue.field]: issue.message }));
+      toast(issue.message, "error");
+      return;
+    }
     const nextSettings = {
       ...settings,
       closingDate: endDate,
@@ -582,6 +585,7 @@ export function SchoolSettingsForm({ initialTab = "Profile" }: { initialTab?: Se
         </div>
       </SidePanel>
 
+      {!isLoading && currentPeriodIssues.length > 0 && activeTab !== "Academics" && <button type="button" className="w-full rounded-xl border border-warning/40 bg-warning/10 p-4 text-left text-sm" onClick={() => setActiveTab("Academics")}><strong>Academic period needs correction.</strong> {currentPeriodIssues[0].message} Open Academics to update the dates and save the current term.</button>}
       <nav className="portal-page-tabs grid grid-cols-2 gap-2 rounded-2xl border !bg-surface p-2 lg:grid-cols-4" aria-label="School settings sections">
         {settingsTabs.map((tab) => {
           const { icon: Icon, description } = tabDetails[tab];
@@ -814,6 +818,7 @@ export function SchoolSettingsForm({ initialTab = "Profile" }: { initialTab?: Se
             title="Current academic period"
             description="Set the active term dates. Attendance percentages use elapsed calendar days from term start to today, or to the term end date once it has passed."
           >
+            {!isLoading && currentPeriodIssues.length > 0 && <div role="alert" className="mx-4 mt-4 rounded-xl border border-warning/40 bg-warning/10 p-4 text-sm sm:mx-5"><p className="font-semibold">The active academic period needs correction.</p><p className="mt-1">{currentPeriodIssues.map((issue) => issue.message).join(" ")} Update the session or dates below, then select “Save and Set Current Term.” Existing records will be preserved.</p></div>}
             <div className="grid min-w-0 max-w-full gap-4 p-4 sm:grid-cols-2 sm:p-5">
               <Field label="Current academic session" error={errors.session}>
                 <Input

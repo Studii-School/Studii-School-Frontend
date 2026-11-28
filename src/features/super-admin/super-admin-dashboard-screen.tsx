@@ -40,10 +40,10 @@ export function SuperAdminDashboardScreen() {
 
   const activeSchools = data?.schools?.filter((school) => schoolStatus(school.status) === "active");
   const suspendedSchools = data?.schools?.filter((school) => schoolStatus(school.status) === "suspended");
-  const reviewSchools = data?.schools?.filter((school) => {
-    const status = school.status?.trim().toUpperCase();
-    return status && schoolStatus(status) !== "active";
-  }).slice(0, 5);
+  const pendingSchools = data?.schools?.filter((school) => schoolStatus(school.status) === "review");
+  const reviewSchools = data?.schools?.filter((school) => schoolStatus(school.status) === "review" || schoolStatus(school.status) === "suspended")
+    .sort((first, second) => Number(schoolStatus(second.status) === "review") - Number(schoolStatus(first.status) === "review"))
+    .slice(0, 5);
   const recentRequests = data?.requests
     ? [...data.requests].sort((first, second) => Date.parse(second.createdAt) - Date.parse(first.createdAt)).slice(0, 5)
     : null;
@@ -59,10 +59,11 @@ export function SuperAdminDashboardScreen() {
         }}><RefreshCw size={16} />Refresh</Button>}
       />
 
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
         {[
           { label: "Total schools", value: data?.schools?.length, icon: Building2, href: "/super-admin/schools" },
           { label: "Active schools", value: activeSchools?.length, icon: CheckCircle2, href: "/super-admin/schools?status=active" },
+          { label: "Profiles to review", value: pendingSchools?.length, icon: ShieldAlert, href: "/super-admin/schools?status=review" },
           { label: "Suspended or inactive", value: suspendedSchools?.length, icon: ShieldAlert, href: "/super-admin/schools?status=suspended" },
           { label: "Demo requests", value: data?.requests?.length, icon: CalendarDays, href: "/super-admin/demo-requests" },
         ].map(({ label, value, icon: Icon, href }) => (
@@ -95,10 +96,10 @@ export function SuperAdminDashboardScreen() {
               </ul>
             )}
         </SectionCard>
-        <SectionCard title="Schools with non-active status" action={<Link className={buttonStyles("outline")} href="/super-admin/schools">View schools</Link>}>
+        <SectionCard title="Schools needing attention" action={<Link className={buttonStyles("outline")} href="/super-admin/schools?status=review">Review profiles</Link>}>
           {!data ? <p className="p-5 text-sm text-muted" role="status">Loading schools…</p>
             : !reviewSchools ? <p className="p-5 text-sm text-danger" role="alert">School statuses could not be loaded.</p>
-            : !reviewSchools.length ? <p className="p-5 text-sm text-muted">No schools have a non-active status.</p>
+            : !reviewSchools.length ? <p className="p-5 text-sm text-muted">No schools are awaiting review or suspended.</p>
             : (
               <ul className="divide-y">
                 {reviewSchools.map((school) => (
@@ -107,7 +108,7 @@ export function SuperAdminDashboardScreen() {
                       <p className="break-words text-sm font-semibold">{school.name ?? "Unnamed school"}</p>
                       {school.email && <p className="mt-1 break-all text-xs text-muted">{school.email}</p>}
                     </div>
-                    <Badge tone={schoolStatus(school.status) === "suspended" ? "warning" : "neutral"}>{statusLabel(school.status)}</Badge>
+                    <Badge tone="warning">{statusLabel(school.status)}</Badge>
                   </li>
                 ))}
               </ul>

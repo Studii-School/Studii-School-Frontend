@@ -4,7 +4,7 @@ This frontend expects the NestJS API to expose authenticated, school-scoped endp
 
 `GET /finance` supplies the complete ledger authorized for the signed-in role, across all terms. The provider fetches this once per refresh; client views share that snapshot. Student and parent authorization must be enforced by the API. Teachers use `/finance/teacher` for payroll and `/finance/teacher/student-status` for assigned-student fee status.
 
-Finance pages default to all terms. `financePeriod=term` explicitly filters invoices by the selected academic period and follows class navigation. Payments and receipts inherit the invoice's period, even when paid later. Collections count successful payments only; expected balances exclude cancelled and waived invoices. Paid accounts are distinct students with no remaining billable balance. An API error must be shown and must not replace live records with local demo data.
+Finance pages default to the selected active academic session and term when one is available. `financePeriod=all` explicitly shows historical records and follows class navigation. Payments and receipts inherit the invoice's period, even when paid later. Collections count successful payments only; expected balances exclude cancelled and waived invoices. Paid accounts are distinct students with no remaining billable balance. An API error must be shown and must not replace live records with local demo data.
 
 Required Flutterwave environment variables in the NestJS backend `.env`:
 

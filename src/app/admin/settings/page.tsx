@@ -2,6 +2,6 @@ import { SchoolSettingsForm } from "@/features/school-settings/school-settings-f
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ section?: string | string[] }> }) {
   const { section } = await searchParams;
-  const initialTab = section === "academics" ? "Academics" : section === "classes" ? "Classes" : "Profile";
+  const initialTab = section === "academics" ? "Academics" : section === "classes" ? "Classes" : section === "branding" ? "Branding" : "Profile";
   return <SchoolSettingsForm key={initialTab} initialTab={initialTab} />;
 }

@@ -24,6 +24,7 @@ import { useFinance } from "@/features/finance/finance-context";
 import { billableInvoices } from "@/features/finance/finance-scope";
 
 import { useSchoolSettings } from "@/features/school-settings/school-settings-context";
+import { useSchoolUnderReview } from "@/features/school-review/school-review-context";
 import { formatNaira } from "@/lib/currency";
 import { downloadCsvFile } from "@/lib/csv-download";
 import { STUDENT_IMPORT_TEMPLATE, STUDENT_IMPORT_TEMPLATE_FILENAME } from "@/lib/import-templates";
@@ -37,6 +38,7 @@ export function AdminStudentsPage() {
   const { sessionRegisters } = useAttendance();
   const { allState: finance } = useFinance();
   const { settings } = useSchoolSettings();
+  const underReview = useSchoolUnderReview();
   const { selectedSession, scope } = useAcademicPeriod();
   const selectedClassId = searchParams.get("class") ?? "";
   const setSelectedClassId = useCallback((classId: string) => {
@@ -184,16 +186,16 @@ export function AdminStudentsPage() {
 
   const actions = (
     <>
-      <Button className="min-h-9 gap-1.5 px-3" type="button" variant="outline" aria-label="Import enrolled students" onClick={() => setImportDialogOpen(true)}>
+      <Button className="min-h-9 gap-1.5 px-3" type="button" variant="outline" aria-label="Import enrolled students" disabled={underReview} title={underReview ? "Available after your school profile is approved" : undefined} onClick={() => setImportDialogOpen(true)}>
         <Upload size={16} />
         <span className="student-action-long">Import enrolled students</span>
         <span className="student-action-short">Import</span>
       </Button>
-      <Link href="/admin/students/new" aria-label="Add enrolled student" className="inline-flex min-h-9 items-center gap-1.5 rounded-[10px] bg-[var(--school-primary)] px-3 text-sm font-semibold text-[var(--school-primary-foreground)]">
+      {underReview ? <span aria-disabled="true" title="Available after your school profile is approved" className="inline-flex min-h-9 items-center gap-1.5 rounded-[10px] bg-surface-muted px-3 text-sm font-semibold text-muted"><Plus size={16} />Add enrolled student</span> : <Link href="/admin/students/new" aria-label="Add enrolled student" className="inline-flex min-h-9 items-center gap-1.5 rounded-[10px] bg-[var(--school-primary)] px-3 text-sm font-semibold text-[var(--school-primary-foreground)]">
         <Plus size={16} />
         <span className="student-action-long">Add enrolled student</span>
         <span className="student-action-short">Add</span>
-      </Link>
+      </Link>}
       {unassignedCount > 0 && <Button className="min-h-9 px-3" type="button" variant="outline" aria-label={`Awaiting placement (${unassignedCount})`} onClick={() => setSelectedClassId("__unassigned_students__")}><span className="student-action-long">Awaiting placement ({unassignedCount})</span><span className="student-action-short">Placement ({unassignedCount})</span></Button>}
     </>
   );

@@ -69,6 +69,7 @@ export function TeacherFinanceAdminScreen() {
   const { state: academics } = useAcademics();
   const salaryByUser = useMemo(() => new Map(academics.staff.filter((staff) => (staff.salaryAmount ?? 0) > 0).map((staff) => [staff.userId, staff.salaryAmount!])), [academics.staff]);
   const [rows, setRows] = useState<StaffFinanceRow[]>([]);
+  const [coveredStaffIds, setCoveredStaffIds] = useState<string[]>([]);
   const [period, setPeriod] = useState(currentPeriod);
   const [tab, setTab] = useState<Tab>("Payroll");
   const [query, setQuery] = useState("");
@@ -92,7 +93,16 @@ export function TeacherFinanceAdminScreen() {
     try {
       const online = Boolean(readStoredToken());
       const data = online ? await financeApi.getAdminTeacherFinance() : await financeRepository.getAdminStaffFinance();
-      setRows(normaliseRows(data?.staff ?? data?.teachers, salaryByUser));
+      const financeRows = normaliseRows(data?.staff?.length ? data.staff : data?.teachers, salaryByUser);
+      const byId = new Map(financeRows.map((row) => [row.staffUserId, row]));
+      setCoveredStaffIds(financeRows.map((row) => row.staffUserId));
+      const directoryRows: StaffFinanceRow[] = academics.staff.map((staff) => ({
+        ...byId.get(staff.userId), staffUserId: staff.userId, staffName: staff.fullName,
+        employeeNumber: staff.employeeNumber, jobTitle: staff.jobTitle,
+        isTeachingStaff: staff.isTeachingStaff, salaryAmount: staff.salaryAmount ?? byId.get(staff.userId)?.salaryAmount ?? 0,
+        entries: byId.get(staff.userId)?.entries ?? [],
+      }));
+      setRows(directoryRows.concat(financeRows.filter((row) => !academics.staff.some((staff) => staff.userId === row.staffUserId))));
       setSource(online ? "api" : "local");
       setLoadError("");
     } catch {
@@ -100,7 +110,7 @@ export function TeacherFinanceAdminScreen() {
     } finally {
       setLoading(false);
     }
-  }, [salaryByUser]);
+  }, [academics.staff, salaryByUser]);
 
   useEffect(() => {
     void load();
@@ -129,6 +139,11 @@ export function TeacherFinanceAdminScreen() {
     net: total.net + row.net,
     unpaid: total.unpaid + (row.salaryEntry && row.salaryEntry.status !== "PAID" ? 1 : 0),
   }), { deductions: 0, net: 0, unpaid: 0 }), [payrollRows]);
+  const prepared = payrollRows.some((row) => Boolean(row.salaryEntry));
+  const paidCount = payrollRows.filter((row) => row.salaryEntry?.status === "PAID").length;
+  const eligibleCount = academics.staff.filter((staff) => staff.status === "ACTIVE" && (staff.salaryAmount ?? 0) > 0).length;
+  const missingSalary = academics.staff.filter((staff) => staff.status === "ACTIVE" && !(staff.salaryAmount && staff.salaryAmount > 0));
+  const uncovered = source === "api" ? academics.staff.filter((staff) => staff.status === "ACTIVE" && !coveredStaffIds.includes(staff.userId)) : [];
 
   const otherEntries = rows.flatMap((staff) => staff.entries.filter((entry) => entry.type !== "SALARY" && entry.type !== "DEDUCTION").map((entry) => ({ ...entry, staffName: staff.staffName })))
     .filter((entry) => !query.trim() || `${entry.staffName} ${entry.title}`.toLowerCase().includes(query.trim().toLowerCase()));
@@ -138,18 +153,18 @@ export function TeacherFinanceAdminScreen() {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) { toast("Choose a payroll month first.", "error"); return; }
     setSaving(true);
     try {
-      const eligible = payrollRows.filter((row) => row.staff.salaryAmount > 0 && !row.salaryEntry);
-      for (const row of eligible) {
+      const eligible = payrollRows.filter((row) => { const directoryStaff = academics.staff.find((staff) => staff.userId === row.staff.staffUserId); return directoryStaff?.status === "ACTIVE" && (directoryStaff.salaryAmount ?? 0) > 0 && row.staff.salaryAmount > 0 && !row.salaryEntry; });
+      const apiResult = source === "api" ? await financeApi.preparePayrollRun(period) : undefined;
+      if (source === "local") for (const row of eligible) {
         const input: CreateStaffFinanceEntryInput = {
           type: "SALARY", title: `Salary · ${period}`, amount: row.staff.salaryAmount,
           status: "YET_TO_BE_PAID", dueDate: lastDay(period), payrollPeriod: period,
         };
-        if (source === "api") await financeApi.createTeacherFinanceEntry(row.staff.staffUserId, input);
-        else await financeRepository.createStaffFinanceEntry(row.staff.staffUserId, input);
+        await financeRepository.createStaffFinanceEntry(row.staff.staffUserId, input);
       }
-      const result = { created: eligible.length, alreadyPrepared: eligible.length === 0 && payrollRows.some((row) => Boolean(row.salaryEntry)) };
+      const result = { created: apiResult?.created ?? eligible.length, alreadyPrepared: apiResult?.alreadyPrepared ?? (eligible.length === 0 && payrollRows.some((row) => Boolean(row.salaryEntry))) };
       await load();
-      toast(result.created ? `Payroll prepared for ${result.created} staff members.` : result.alreadyPrepared ? `Payroll for ${period} was already prepared.` : "No active staff have a salary amount set up yet.", result.created ? "success" : "warning");
+      toast(result.created ? `Payroll prepared for ${result.created} staff member(s). Review the list before recording payments.` : result.alreadyPrepared ? `Payroll for ${period} was already prepared.` : "No active staff with a configured base salary were prepared.", result.created ? "success" : "warning");
     } catch (error) {
       await load();
       toast(error instanceof Error ? error.message : "Payroll could not be prepared.", "error");
@@ -231,7 +246,7 @@ export function TeacherFinanceAdminScreen() {
     <PageHeader title="Staff payments" description="Prepare monthly salaries, apply deductions, and track other staff payments." />
     {loadError && <div role="alert" className="mb-4 rounded-lg border p-4 text-sm">{loadError} <button className="underline" onClick={() => void load()}>Retry</button></div>}
     <div className="mb-5 flex flex-col gap-3 rounded-2xl border bg-surface p-4 sm:flex-row sm:items-end sm:justify-between">
-      <label className="block text-sm font-medium">Payroll month<Input className="mt-1.5 max-w-56" aria-label="Payroll month" type="month" value={period} onChange={(event) => setPeriod(event.target.value)} /></label>
+      <label className="block text-sm font-medium">Payroll month<Input className="mt-1.5 max-w-56" aria-label="Payroll month" type="month" value={period} onChange={(event) => { setPeriod(event.target.value); setSalaryOverrides({}); }} /></label>
       <div className="flex flex-wrap gap-2">
         {tab === "Payroll" ? <>
           <Button variant="outline" onClick={() => openEntryForm("deduction")}><span aria-hidden="true">−</span> Add deduction</Button>
@@ -243,19 +258,20 @@ export function TeacherFinanceAdminScreen() {
 
     {tab === "Payroll" ? <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-3">
-        <Card className="p-4"><p className="text-sm text-muted">Take home this month</p><p className="mt-2 text-2xl font-bold">{formatNaira(payrollTotals.net)}</p><p className="mt-1 text-xs text-muted">{payrollRows.some((row) => row.salaryEntry) ? "After listed deductions" : "Estimated from base salaries"}</p></Card>
+        <Card className="p-4"><p className="text-sm text-muted">{prepared ? "Prepared take-home estimate" : "Estimated take-home"}</p><p className="mt-2 text-2xl font-bold">{formatNaira(payrollTotals.net)}</p><p className="mt-1 text-xs text-muted">{prepared ? "After listed deductions" : "From base salaries before preparation"}</p></Card>
         <Card className="p-4"><p className="text-sm text-muted">Deductions</p><p className="mt-2 text-2xl font-bold">{formatNaira(payrollTotals.deductions)}</p><p className="mt-1 text-xs text-muted">Recorded for {period}</p></Card>
-        <Card className="p-4"><p className="text-sm text-muted">Still to pay</p><p className="mt-2 text-2xl font-bold">{payrollTotals.unpaid} staff</p><p className="mt-1 text-xs text-muted">Salary payments not yet marked paid</p></Card>
+        <Card className="p-4"><p className="text-sm text-muted">Payroll status</p><p className="mt-2 text-xl font-bold">{prepared ? `${payrollTotals.unpaid} still to pay` : "Payroll not prepared"}</p><p className="mt-1 text-xs text-muted">{paidCount} payments recorded · {eligibleCount} staff with base salaries</p></Card>
       </div>
-      <SectionCard title="Payroll list" description="Staff can see their salary and deductions in their own finance page.">
+      {(missingSalary.length > 0 || uncovered.length > 0) && <div className="rounded-xl border bg-surface p-4 text-sm"><p className="font-semibold">Payroll coverage</p>{missingSalary.length > 0 && <p className="mt-1 text-muted">{missingSalary.length} active staff member(s) need a base monthly salary in Staff &amp; HR: {missingSalary.map((staff) => staff.fullName).join(", ")}.</p>}{uncovered.length > 0 && <p className="mt-1 text-muted">{uncovered.length} active staff member(s) are missing from the finance API response: {uncovered.map((staff) => staff.fullName).join(", ")}. They appear here for review; payment recording requires a finance entry returned by the API.</p>}</div>}
+      <SectionCard title="Payroll list" description="Teaching and non-teaching staff from the directory. Prepared entries and payments appear when returned by Finance.">
         <div className="border-b p-4"><SearchInput value={query} onChange={setQuery} placeholder="Find a staff member" /></div>
         {loading ? <p className="p-6 text-sm text-muted">Loading staff payments…</p> : visiblePayrollRows.length ? <div className="divide-y px-4 sm:px-5">
           {visiblePayrollRows.map(({ staff, salary, deductions, net, salaryEntry, entries }) => <div key={staff.staffUserId} className="grid gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
             <div className="min-w-0"><p className="truncate font-semibold"><PersonNameLink kind="staff" id={staff.staffUserId}>{staff.staffName}</PersonNameLink></p><p className="text-xs text-muted">{staff.jobTitle || (staff.isTeachingStaff ? "Teaching staff" : "Staff")}{staff.employeeNumber ? ` · ${staff.employeeNumber}` : ""}{` · Due ${formatDate(salaryEntry?.dueDate ?? lastDay(period))}`}</p><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs"><span>Salary <b>{formatNaira(salary)}</b></span><span className="text-muted">Deductions <b>{formatNaira(deductions)}</b></span><span className="text-success">Take home <b>{formatNaira(net)}</b></span></div>
-              {!salaryEntry && <label className="mt-3 block max-w-52 text-xs font-medium">Monthly salary (₦)<Input className="mt-1" aria-label={`Monthly salary for ${staff.staffName}`} type="number" min="0" step="0.01" inputMode="decimal" value={salaryOverrides[staff.staffUserId] ?? (staff.salaryAmount ? String(staff.salaryAmount) : "")} onChange={(event) => setSalaryOverrides((current) => ({ ...current, [staff.staffUserId]: event.target.value }))} placeholder="Enter amount" /></label>}
+              {!salaryEntry && source === "local" && salaryByUser.has(staff.staffUserId) && <label className="mt-3 block max-w-52 text-xs font-medium">Amount for this run (₦)<Input className="mt-1" aria-label={`Amount for this run for ${staff.staffName}`} type="number" min="0" step="0.01" inputMode="decimal" value={salaryOverrides[staff.staffUserId] ?? (staff.salaryAmount ? String(staff.salaryAmount) : "")} onChange={(event) => setSalaryOverrides((current) => ({ ...current, [staff.staffUserId]: event.target.value }))} placeholder="Enter amount" /><span className="mt-1 block font-normal text-muted">One month only. Change base salary in Staff &amp; HR.</span></label>}
               {entries.filter((entry) => entry.type === "DEDUCTION").map((entry) => <p key={entry.id} className="mt-1 text-xs text-muted">− {entry.title}: {formatNaira(entry.amount)}</p>)}
             </div>
-            <div className="flex items-center gap-2">{salaryEntry ? <><Badge tone={statusTone(salaryEntry.status)}>{statusLabel(salaryEntry.status)}</Badge>{salaryEntry.status !== "PAID" && <Button className="min-h-9 px-3" onClick={() => setPaying(salaryEntry)}>Record payment</Button>}</> : <Badge tone="neutral">Not prepared</Badge>}</div>
+            <div className="flex items-center gap-2">{salaryEntry ? <><Badge tone={statusTone(salaryEntry.status)}>{statusLabel(salaryEntry.status)}</Badge>{salaryEntry.status !== "PAID" && <Button className="min-h-9 px-3" onClick={() => setPaying(salaryEntry)}>Record payment</Button>}</> : <Badge tone="neutral">{academics.staff.find((item) => item.userId === staff.staffUserId)?.status !== "ACTIVE" ? "Excluded: inactive" : !staff.salaryAmount ? "Needs base salary" : source === "api" && !coveredStaffIds.includes(staff.staffUserId) ? "Missing finance entry" : "Not prepared"}</Badge>}</div>
           </div>)}
         </div> : <div className="p-7 text-center"><p className="font-medium">No staff match that search</p><p className="mt-1 text-sm text-muted">Try another name or clear the search.</p></div>}
       </SectionCard>
